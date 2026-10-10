@@ -2,9 +2,9 @@
 // package alone; it has no runtime exports. See README.md for the semver promise.
 // Required: makes the module augmentation below resolve @deepseek-ai/cordis.
 import type {} from '@deepseek-ai/cordis'
-import type { PriceVersion, Quote, TokenCounts } from 'dsh-pricing-data'
+import type { Quote, Rates, TokenCounts } from 'dsh-pricing-data'
 
-export type { Quote, PriceVersion, TokenCounts } from 'dsh-pricing-data'
+export type { Quote, PriceVersion, Rates, TokenCounts } from 'dsh-pricing-data'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -119,7 +119,8 @@ export type ProviderPriceOverride =
     provider: string
     kind: 'manual'
     currency: Currency
-    models: Record<string, PriceVersion['rates']['flat']>
+    /** Rates per million tokens, keyed by model id; a dimension without a rate cannot be used. */
+    models: Record<string, Rates>
   }
 
 export interface PricingService {

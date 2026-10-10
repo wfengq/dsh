@@ -1,6 +1,6 @@
 import { expectTypeOf, test } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import type { TokenCounts, Quote, PriceVersion } from 'dsh-pricing-data'
+import type { TokenCounts, Quote, PriceVersion, Rates } from 'dsh-pricing-data'
 import type {
   BalanceFetcher,
   BalanceSnapshot,
@@ -78,5 +78,6 @@ test('pricing quote reuses dsh-pricing-data types', () => {
   expectTypeOf<PricingService['catalogVersion']>().returns.toEqualTypeOf<string>()
   expectTypeOf<PricingService['overrides']>().returns.toEqualTypeOf<ProviderPriceOverride[]>()
   expectTypeOf<Extract<ProviderPriceOverride, { kind: 'manual' }>['currency']>().toEqualTypeOf<'CNY' | 'USD'>()
+  expectTypeOf<Extract<ProviderPriceOverride, { kind: 'manual' }>['models']>().toEqualTypeOf<Record<string, Rates>>()
   expectTypeOf<PriceVersion>().not.toBeAny()
 })
