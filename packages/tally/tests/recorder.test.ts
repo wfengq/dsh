@@ -21,6 +21,11 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+/** Entries sorted by id, since store reads come back in no particular order. */
+function byId(entries: StoredEntry[]): StoredEntry[] {
+  return [...entries].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))
+}
+
 function open(name = 'tally.v1.sqlite'): TallyStore {
   const store = TallyStore.open(join(dir, name))
   stores.push(store)
@@ -79,7 +84,7 @@ describe('Recorder', () => {
       usageKnown: true,
       deleted: false,
     })
-    expect(store.entries({ from: 0, to: Number.MAX_SAFE_INTEGER })).toEqual(seen)
+    expect(byId(store.entries({ from: 0, to: Number.MAX_SAFE_INTEGER }))).toEqual(byId(seen))
   })
 
   it('event-by-event ingest equals one-shot ingest', () => {
@@ -92,7 +97,7 @@ describe('Recorder', () => {
     for (let i = 1; i <= log.length; i++) total += rb.rec.ingest('root', ROOT, log.slice(0, i))
     expect(total).toBe(3)
     const all = { from: 0, to: Number.MAX_SAFE_INTEGER }
-    expect(b.entries(all)).toEqual(a.entries(all))
+    expect(byId(b.entries(all))).toEqual(byId(a.entries(all)))
     expect(b.getCursor('root')).toEqual(a.getCursor('root'))
   })
 
@@ -103,7 +108,7 @@ describe('Recorder', () => {
     const rb = recorder(b).rec
     for (const event of log) rb.ingest('root', ROOT, [event])
     const all = { from: 0, to: Number.MAX_SAFE_INTEGER }
-    expect(b.entries(all)).toEqual(a.entries(all))
+    expect(byId(b.entries(all))).toEqual(byId(a.entries(all)))
   })
 
   it('attributes sub-agent entries to the root session', () => {

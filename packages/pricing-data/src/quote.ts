@@ -45,6 +45,9 @@ function line(tokens: number | undefined, rate: string | undefined): Fixed | und
 export function quote(catalog: PriceCatalog, q: QuoteRequest): Quote | null {
   const provider = Object.hasOwn(catalog.providers, q.provider) ? catalog.providers[q.provider] : undefined
   if (!provider) return null
+  // "separate" has no defined semantics yet (reasoning tokens are part of outputTokens, so
+  // billing them again would double-count); validateCatalog rejects it, and quote refuses it.
+  if (provider.reasoningBilledAs === 'separate') return null
   const aliased = provider.aliases && Object.hasOwn(provider.aliases, q.model) ? provider.aliases[q.model] : q.model
   const versions = Object.hasOwn(provider.models, aliased) ? provider.models[aliased] : undefined
   const version = findVersion(versions, q.at)
@@ -61,8 +64,9 @@ export function quote(catalog: PriceCatalog, q: QuoteRequest): Quote | null {
   const cacheRead = line(usage.cacheReadTokens, rates.cacheRead)
   const cacheWrite = line(usage.cacheWriteTokens, rates.cacheWrite)
   const output = line(usage.outputTokens, rates.output)
-  const reasoning = provider.reasoningBilledAs === 'separate' ? line(usage.reasoningTokens, rates.output) : ZERO
-  if (!input || !cacheRead || !cacheWrite || !output || !reasoning) return null
+  // Reasoning tokens are counted in outputTokens ("output") or not billed ("free").
+  const reasoning = ZERO
+  if (!input || !cacheRead || !cacheWrite || !output) return null
 
   const total = [input, cacheRead, cacheWrite, output, reasoning].reduce(addFixed, ZERO)
   const result: Quote = {

@@ -41,6 +41,10 @@ export interface PriceCatalog {
   providers: Record<string, {
     currency: 'CNY' | 'USD'
     unit: 'per_million_tokens'
+    /**
+     * How reasoning tokens (a subset of `outputTokens`) are billed. `'separate'` is reserved:
+     * its semantics are not defined yet, so `validateCatalog` rejects it and `quote` returns `null`.
+     */
     reasoningBilledAs: 'output' | 'separate' | 'free'
     /** Sorted by effectiveFrom ascending. */
     models: Record<string, PriceVersion[]>

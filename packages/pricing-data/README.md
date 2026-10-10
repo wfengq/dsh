@@ -19,7 +19,7 @@ DeepSeek Harness 插件族使用的模型价格数据包：内置价格目录（
 
 别名 `deepseek-v4-flash` 和 `deepseek-v4-flash-vision-exp` 都指向 `deepseek-flash`。
 
-高峰时段为北京时间（`Asia/Shanghai`）周一至周五 09:00-12:00 和 14:00-18:00（左闭右开），其余时间为空闲价。官方 `TokenUsage` 中的推理 token 已包含在 `outputTokens` 里，不另外计费（`reasoningBilledAs: "output"`）。
+高峰时段为北京时间（`Asia/Shanghai`）周一至周五 09:00-12:00 和 14:00-18:00（左闭右开），其余时间为空闲价。官方 `TokenUsage` 中的推理 token 已包含在 `outputTokens` 里，不另外计费（`reasoningBilledAs: "output"`）。`reasoningBilledAs` 取值 `"separate"`（推理 token 单独计费）的含义尚未定义：推理 token 本来就包含在输出里，再单独计一次会重复计费，所以目前 `validateCatalog` 会拒绝它，`quote()` 对这样的厂商返回 `null`。
 
 ## 节假日日历
 

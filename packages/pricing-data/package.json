@@ -15,7 +15,8 @@
   },
   "files": [
     "lib",
-    "catalog.json"
+    "catalog.json",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p .",

@@ -143,8 +143,12 @@ export function validateCatalog(c: unknown): string[] {
       }
       if (p.currency !== 'CNY' && p.currency !== 'USD') errors.push(`${where}.currency: must be CNY or USD`)
       if (p.unit !== 'per_million_tokens') errors.push(`${where}.unit: must be per_million_tokens`)
-      if (!['output', 'separate', 'free'].includes(p.reasoningBilledAs as string)) {
-        errors.push(`${where}.reasoningBilledAs: must be output, separate or free`)
+      if (p.reasoningBilledAs === 'separate') {
+        // Reasoning tokens are already part of outputTokens, so billing them again would
+        // double-count; a separate reasoning rate needs its own semantics first.
+        errors.push(`${where}.reasoningBilledAs: "separate" is not supported yet (reasoning tokens are part of outputTokens and would be billed twice); use "output" or "free"`)
+      } else if (!['output', 'free'].includes(p.reasoningBilledAs as string)) {
+        errors.push(`${where}.reasoningBilledAs: must be output or free`)
       }
       const models = isObj(p.models) ? p.models : undefined
       if (!models) errors.push(`${where}.models: must be an object`)

@@ -1,7 +1,7 @@
 import type { TokenCounts } from 'dsh-pricing-data'
 import type { Money, SessionUsage, TallyTokens, UsageGroup, UsageQuery } from 'dsh-tally-api'
 import type { TallyPricing } from './pricing-service.js'
-import type { StoredEntry } from './store.js'
+import type { UsageRow } from './store.js'
 
 const FRACTION_DIGITS = 18
 const SCALE = 10n ** BigInt(FRACTION_DIGITS)
@@ -61,7 +61,7 @@ interface RateCard {
   /** `undefined`: no rate, so any tokens in that dimension make the entry unpriced. */
   cacheWrite: bigint | undefined
   output: bigint
-  /** `undefined`: reasoning is billed separately but no rate is known. */
+  /** `undefined`: the reasoning probe quoted `null`, so reasoning tokens make the entry unpriced. */
   reasoning: bigint | undefined
 }
 
@@ -75,7 +75,7 @@ interface RateCard {
  * to `quoteRoute`. (The version/band/currency comparison of the two bucket ends below is a
  * belt-and-braces check.)
  * Rates are read from probe quotes of 1,000,000 tokens, whose breakdown equals the per-million
- * rate of each dimension (reasoning is `0` unless billed separately); a probe that quotes `null`
+ * rate of each dimension (reasoning is `0`: it is part of the output count); a probe that quotes `null`
  * means that dimension has no rate. Cache write and reasoning are probed on their own because
  * their rates are often absent and would otherwise make the whole probe `null`.
  */
@@ -88,7 +88,7 @@ class RateCache {
   }
 
   /** Cost of one entry as 18-dp units, or null when no price is known. */
-  price(e: StoredEntry): { currency: Money['currency']; units: bigint } | null {
+  price(e: UsageRow): { currency: Money['currency']; units: bigint } | null {
     const card = this.#card(e.route, e.model, e.at)
     if (card === null) return this.#direct(e)
     const t = e.tokens
@@ -103,7 +103,7 @@ class RateCache {
     return { currency: card.currency, units }
   }
 
-  #direct(e: StoredEntry): { currency: Money['currency']; units: bigint } | null {
+  #direct(e: UsageRow): { currency: Money['currency']; units: bigint } | null {
     const q = this.#pricing.quoteRoute(e.route, e.model, toUsage(e.tokens), e.at)
     return q === null ? null : { currency: q.currency, units: amountUnits(q.amount) }
   }
@@ -182,7 +182,7 @@ export function toUsage(t: TallyTokens): TokenCounts {
   }
 }
 
-function add(acc: Accumulator, e: StoredEntry, rates: RateCache): void {
+function add(acc: Accumulator, e: UsageRow, rates: RateCache): void {
   const t = e.tokens
   acc.requestCount++
   acc.input += t.input
@@ -225,13 +225,14 @@ function compareKeys(a: string, b: string): number {
 function dayKeyer(tz: string): (at: number) => string {
   const fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
   // Time zone offsets change on quarter-hour boundaries, so one lookup per 15 minutes is exact
-  // and saves the (comparatively slow) Intl call for dense ledgers.
+  // and saves the (comparatively slow) Intl call for dense ledgers. Keyed by bucket, so entries
+  // may come in any order.
   const BUCKET_MS = 15 * 60_000
-  let lastBucket = Number.NaN
-  let lastKey = ''
+  const keys = new Map<number, string>()
   return (at) => {
     const bucket = Math.floor(at / BUCKET_MS)
-    if (bucket === lastBucket) return lastKey
+    let key = keys.get(bucket)
+    if (key !== undefined) return key
     let year = ''
     let month = ''
     let day = ''
@@ -240,24 +241,24 @@ function dayKeyer(tz: string): (at: number) => string {
       else if (part.type === 'month') month = part.value
       else if (part.type === 'day') day = part.value
     }
-    lastBucket = bucket
-    lastKey = `${year}-${month}-${day}`
-    return lastKey
+    key = `${year}-${month}-${day}`
+    keys.set(bucket, key)
+    return key
   }
 }
 
 /**
  * Group entries and sum tokens and cost. Unknown-usage entries are counted but never priced;
  * entries without a known price are counted in `unpricedCount` and contribute no cost.
- * Groups are sorted by key ascending.
+ * Entries may come in any order; groups are sorted by key ascending.
  */
 export function aggregate(
-  entries: StoredEntry[],
+  entries: UsageRow[],
   pricing: TallyPricing,
   groupBy: UsageQuery['groupBy'],
   tz: string,
 ): UsageGroup[] {
-  let keyOf: (e: StoredEntry) => string
+  let keyOf: (e: UsageRow) => string
   switch (groupBy) {
     case 'day': {
       const dayKey = dayKeyer(tz)
@@ -284,7 +285,7 @@ export function aggregate(
  * Usage of one session tree. `entries` are all entries whose `rootSessionId === sessionId`;
  * `total` covers all of them, `children` breaks down every other session (sub-agent) by id.
  */
-export function sessionUsage(entries: StoredEntry[], sessionId: string, pricing: TallyPricing): SessionUsage {
+export function sessionUsage(entries: UsageRow[], sessionId: string, pricing: TallyPricing): SessionUsage {
   const rates = new RateCache(pricing)
   const total = newAccumulator(sessionId)
   const children = new Map<string, Accumulator>()

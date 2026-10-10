@@ -139,7 +139,7 @@ describe('aggregate rate caching', () => {
       v: {
         currency: 'USD',
         unit: 'per_million_tokens',
-        reasoningBilledAs: 'separate',
+        reasoningBilledAs: 'output',
         models: {
           m: [
             {

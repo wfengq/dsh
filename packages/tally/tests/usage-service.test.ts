@@ -226,9 +226,35 @@ describe('dsh-tally plugin', () => {
     const recorded: TallyEntry[] = []
     ctx.on('tally/recorded', e => { recorded.push(e) })
     const all = seqd([...turn(1), ...turn(2)])
-    const fake = { id: 'm', header: { id: 'm', createdAt: 0 }, inheritedEventCount: 0, isOwnSeq: () => true, ownEvents: () => all }
-    ctx.emit('session/event' as never, fake as never, all[all.length - 1] as never)
-    expect(recorded.map(e => e.id)).toEqual(['m:3', 'm:9'])
+    // The writer has just appended the turn-2 message (seq 9), which settles that attempt.
+    const fake = { id: 'm', header: { id: 'm', createdAt: 0 }, inheritedEventCount: 0, isOwnSeq: () => true, ownEvents: () => all.slice(0, 10) }
+    ctx.emit('session/event' as never, fake as never, all[9] as never)
+    // Turn 1 is history: recorded, but only the attempt settled by the triggering event is announced.
+    expect(recorded.map(e => e.id)).toEqual(['m:9'])
+    expect((await usage.session('m')).total.requestCount).toBe(2)
+  })
+
+  it('does not announce history when a live session refolds after a rebuild', async () => {
+    const usage = await load()
+    await usage.idle()
+    const recorded: TallyEntry[] = []
+    ctx.on('tally/recorded', e => { recorded.push(e) })
+    const all = seqd([...turn(1), ...turn(2)])
+    let visible = 0
+    const fake = { id: 'r', header: { id: 'r', createdAt: 0 }, inheritedEventCount: 0, isOwnSeq: () => true, ownEvents: () => all.slice(0, visible) }
+    const emitNext = () => ctx.emit('session/event' as never, fake as never, all[visible++] as never)
+    for (let i = 0; i < 6; i++) emitNext() // turn 1, live
+    expect(recorded.map(e => e.id)).toEqual(['r:3'])
+
+    // The session is not listed by sessionQuery, so the rebuild drops its entries and cursor.
+    await usage.rebuild()
+    expect((await usage.session('r')).total.requestCount).toBe(0)
+
+    for (let i = 6; i < 9; i++) emitNext() // turn 2 up to step/start: refolds turn 1 silently
+    expect(recorded.map(e => e.id)).toEqual(['r:3'])
+    emitNext() // the turn-2 message settles a new attempt
+    expect(recorded.map(e => e.id)).toEqual(['r:3', 'r:9'])
+    expect((await usage.session('r')).total.requestCount).toBe(2)
   })
 
   it('attributes live sub-agent entries to the root session', async () => {
@@ -264,7 +290,10 @@ describe('dsh-tally plugin', () => {
     const fake = { id: 'u', header: { id: 'u', createdAt: 0 }, inheritedEventCount: 0, isOwnSeq: () => true, ownEvents: () => all }
     for (const event of all) ctx.emit('session/event' as never, fake as never, event as never)
     expect(recorded).toHaveLength(1)
-    expect(recorded[0]).toMatchObject({ usageKnown: false, cost: null, tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } })
+    // Unknown usage is never priced, so no band or price version is reported either.
+    expect(recorded[0]).toMatchObject({
+      usageKnown: false, cost: null, band: null, priceVersion: null, tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+    })
   })
 
   it('does not record synthetic closers of a cold log, so the real tail is recorded later', async () => {
@@ -347,6 +376,27 @@ describe('dsh-tally plugin', () => {
     expect(ctx.tallyPricing.overrides().map(o => o.provider)).toEqual(['good-gateway'])
     const warned = logs.filter(m => m.type === 'warn' && String(m.args[0]).includes('bad-gateway'))
     expect(warned).toHaveLength(1)
+  })
+
+  it('ignores an alias override with an unknown target and reports it in status', async () => {
+    const usage = await load({
+      overrides: [
+        { provider: 'gw-a', kind: 'alias', target: { provider: 'no-such-vendor' } },
+        { provider: 'gw-b', kind: 'alias', target: { provider: 'deepseek', model: 'no-such-model' } },
+        { provider: 'gw-c', kind: 'alias', target: { provider: 'deepseek', model: 'deepseek-flash' } },
+      ],
+    })
+    await usage.idle()
+    const errors = usage.status().errors
+    expect(errors.map(e => e.message)).toEqual([
+      expect.stringContaining('"gw-a"'),
+      expect.stringContaining('"gw-b"'),
+    ])
+    expect(errors[0]!.message).toContain('no-such-vendor')
+    expect(errors[1]!.message).toContain('no-such-model')
+    expect(ctx.tallyPricing.overrides().map(o => o.provider)).toEqual(['gw-c'])
+    const warned = logs.filter(m => m.type === 'warn' && /gw-[ab]/.test(String(m.args[0])))
+    expect(warned).toHaveLength(2)
   })
 
   it('runs the backfill in the background and stops it on dispose', async () => {

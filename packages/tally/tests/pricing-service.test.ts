@@ -43,6 +43,17 @@ describe('TallyPricing', () => {
     expect(p.quoteRoute('my-gateway', 'whatever', u, wed10)?.amount).toBe('10.04')
   })
 
+  it('rejects an alias override whose target provider or model is not in the catalog', () => {
+    expect(() => make([{ provider: 'gw', kind: 'alias', target: { provider: 'nope' } }]))
+      .toThrow(/gw.*target provider "nope" is not in the price catalog/)
+    expect(() => make([{ provider: 'gw', kind: 'alias', target: { provider: 'constructor' } }])).toThrow(/constructor/)
+    expect(() => make([{ provider: 'gw', kind: 'alias', target: { provider: 'deepseek', model: 'nope' } }]))
+      .toThrow(/gw.*target model "nope" is not a model of "deepseek"/)
+    // A catalog alias of a model is a valid target model.
+    const p = make([{ provider: 'gw', kind: 'alias', target: { provider: 'deepseek', model: 'deepseek-v4-flash' } }])
+    expect(p.quoteRoute('gw', 'x', u, wed10)?.amount).toBe('10.04')
+  })
+
   it('prices a manual override with exact decimals and flat band', () => {
     const p = make([{ provider: 'my-gateway', kind: 'manual', currency: 'USD', models: { m: { input: '1', output: '2' } } }])
     const usage = { inputTokens: M, outputTokens: M, cacheReadTokens: 0, cacheWriteTokens: 0 }

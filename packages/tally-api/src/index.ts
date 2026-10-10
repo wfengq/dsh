@@ -51,13 +51,19 @@ export interface TallyEntry {
   at: number
   /** Raw provider (route) id as recorded in the session log. */
   route: string
-  /** Pricing vendor after route mapping; equals `route` when no mapping applies. */
+  /**
+   * Pricing vendor after the `providerRoutes` mapping; equals `route` when no mapping applies.
+   * Price overrides are not reflected here: an alias override prices the entry as its target
+   * vendor, but `provider` still names the route-mapped vendor.
+   */
   provider: string
   model: string
+  /** Price band of the quote; `null` when there is no quote (no price known, or unknown usage). */
   band: TallyBand | null
   tokens: TallyTokens
-  /** `null` when no price is known; never `"0"` as a stand-in. */
+  /** `null` when no price is known or usage is unknown; never `"0"` as a stand-in. */
   cost: Money | null
+  /** Price version of the quote; `null` when there is no quote (no price known, or unknown usage). */
   priceVersion: string | null
   usageKnown: boolean
 }

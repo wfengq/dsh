@@ -9,7 +9,7 @@ import { withoutInterruptedClosers } from './cold-log.js'
 import { TallyPricing, type TallyPricingService } from './pricing-service.js'
 import { aggregate, sessionUsage, toUsage } from './query.js'
 import { Recorder, type SessionHeaderLike } from './recorder.js'
-import { TallyStore, type StoredEntry } from './store.js'
+import { TallyStore, type StoredEntry, type UsageRow } from './store.js'
 
 export interface TallyUsageConfig {
   /** SQLite ledger file. */
@@ -137,7 +137,7 @@ export class TallyUsage extends Service implements UsageService {
   async query(q: UsageQuery): Promise<UsageGroup[]> {
     const pricing = this.pricing()
     const f = q.filter ?? {}
-    let entries = this.store.entries({ from: q.from, to: q.to, model: f.model, rootSessionId: f.rootSessionId })
+    let entries = this.store.usage({ from: q.from, to: q.to, model: f.model, rootSessionId: f.rootSessionId })
     if (f.provider !== undefined) entries = entries.filter(e => pricing.providerOf(e.route) === f.provider)
     if (f.workspaceId !== undefined) entries = entries.filter(e => e.workspaceId === f.workspaceId)
     if (f.band !== undefined) entries = entries.filter(e => quoteEntry(pricing, e)?.band === f.band)
@@ -149,8 +149,8 @@ export class TallyUsage extends Service implements UsageService {
    * sub-agent), the total covers that session's own entries.
    */
   async session(sessionId: string): Promise<SessionUsage> {
-    let entries = this.store.entries({ ...ALL_TIME, rootSessionId: sessionId })
-    if (entries.length === 0) entries = this.store.entries({ ...ALL_TIME, sessionIds: [sessionId] })
+    let entries = this.store.usage({ ...ALL_TIME, rootSessionId: sessionId })
+    if (entries.length === 0) entries = this.store.usage({ ...ALL_TIME, sessionIds: [sessionId] })
     return sessionUsage(entries, sessionId, this.pricing())
   }
 
@@ -225,9 +225,14 @@ export class TallyUsage extends Service implements UsageService {
       const expected = last === undefined ? session.inheritedEventCount : last + 1
       // Fast path: the event directly follows what is folded already. Otherwise (first event
       // after a restart or rebuild, or a gap) refold from the session's own log; the cursor
-      // skips everything already recorded. `ingest` is synchronous, so calls never interleave.
-      const events = event.seq === expected ? [event] : session.ownEvents()
-      this.recorder.ingest(id, session.header, events)
+      // skips everything already recorded. Only attempts settled by this event are live: what
+      // the earlier events settle is history and is recorded without `tally/recorded`.
+      // `ingest` is synchronous, so calls never interleave.
+      if (event.seq !== expected) {
+        const history = session.ownEvents().filter(e => e.seq < event.seq)
+        this.recorder.ingest(id, session.header, history, { notify: false })
+      }
+      this.recorder.ingest(id, session.header, [event])
     } catch (error) {
       this.fail(id, error)
     }
@@ -292,7 +297,8 @@ export class TallyUsage extends Service implements UsageService {
     let entry: TallyEntry
     try {
       const pricing = this.pricing()
-      const q = quoteEntry(pricing, e)
+      // Unknown usage is never priced, so it has no band or price version either.
+      const q = e.usageKnown ? quoteEntry(pricing, e) : null
       entry = {
         id: e.id,
         sessionId: e.sessionId,
@@ -304,8 +310,7 @@ export class TallyUsage extends Service implements UsageService {
         model: e.model,
         band: q?.band ?? null,
         tokens: { ...e.tokens },
-        // Unknown usage is never priced.
-        cost: e.usageKnown && q !== null ? { amount: q.amount, currency: q.currency } : null,
+        cost: q === null ? null : { amount: q.amount, currency: q.currency },
         priceVersion: q?.priceVersion ?? null,
         usageKnown: e.usageKnown,
       }
@@ -321,6 +326,6 @@ export class TallyUsage extends Service implements UsageService {
   }
 }
 
-function quoteEntry(pricing: TallyPricing, e: StoredEntry) {
+function quoteEntry(pricing: TallyPricing, e: UsageRow) {
   return pricing.quoteRoute(e.route, e.model, toUsage(e.tokens), e.at)
 }

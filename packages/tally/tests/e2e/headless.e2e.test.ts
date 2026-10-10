@@ -129,7 +129,7 @@ describe('dsh-tally in the real dsh headless profile', () => {
   function readEntries(): StoredEntry[] {
     const store = TallyStore.open(dbPath)
     try {
-      return store.entries({ from: 0, to: Date.now() + 1 })
+      return store.entries({ from: 0, to: Date.now() + 1 }).sort((x, y) => x.at - y.at)
     } finally {
       store.close()
     }
@@ -140,6 +140,8 @@ describe('dsh-tally in the real dsh headless profile', () => {
   it('records the attempt of a headless turn with route, model and tokens', async () => {
     const result = await headless('say hi')
     expect(result.code, describeRun(result)).toBe(0)
+    // Loading the plugin (and node:sqlite) must not print Node warnings into a dsh run.
+    expect(result.stderr, describeRun(result)).not.toContain('ExperimentalWarning')
     expect(server.requests.length).toBeGreaterThanOrEqual(1)
     expect(existsSync(dbPath), describeRun(result)).toBe(true)
 
@@ -170,6 +172,7 @@ describe('dsh-tally in the real dsh headless profile', () => {
 
     const result = await headless('say hi again')
     expect(result.code, describeRun(result)).toBe(0)
+    expect(result.stderr, describeRun(result)).not.toContain('ExperimentalWarning')
 
     const ids = new Set(readEntries().map(e => e.id))
     for (const id of firstIds) expect(ids.has(id), `backfilled ${id}`).toBe(true)

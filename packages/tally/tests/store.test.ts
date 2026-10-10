@@ -1,8 +1,9 @@
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { sqlite } from '../src/sqlite.js'
 import { TallyStore, type StoredEntry } from '../src/store.js'
 
 let dir: string
@@ -19,6 +20,11 @@ afterEach(() => {
   store = undefined
   rmSync(dir, { recursive: true, force: true })
 })
+
+/** Entry ids sorted, since reads come back in no particular order. */
+function ids(rows: StoredEntry[]): string[] {
+  return rows.map(e => e.id).sort()
+}
 
 function entry(over: Partial<StoredEntry> = {}): StoredEntry {
   return {
@@ -37,6 +43,24 @@ function entry(over: Partial<StoredEntry> = {}): StoredEntry {
 }
 
 describe('TallyStore', () => {
+  it('opens without printing the SQLite ExperimentalWarning and keeps other warnings', () => {
+    // A fresh process, since Node prints each experimental warning only once per process.
+    // Runs the built entry (`pnpm test` builds first), as dsh would load it.
+    const lib = new URL('../lib/store.js', import.meta.url).href
+    const script = [
+      `const { TallyStore } = await import(${JSON.stringify(lib)})`,
+      'TallyStore.open(process.env.TALLY_DB).close()',
+      "process.emitWarning('another feature', 'ExperimentalWarning')",
+    ].join('\n')
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      env: { ...process.env, TALLY_DB: path, NODE_OPTIONS: '' },
+    })
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stderr).not.toContain('SQLite')
+    expect(result.stderr).toContain('ExperimentalWarning: another feature')
+  })
+
   it('creates missing parent directories', () => {
     const nested = join(dir, 'a', 'b', 'tally.v1.sqlite')
     store = TallyStore.open(nested)
@@ -76,7 +100,7 @@ describe('TallyStore', () => {
     store.upsertEntry(entry({ id: 's1:1', at: 100 }))
     store.upsertEntry(entry({ id: 's1:2', at: 200 }))
     store.upsertEntry(entry({ id: 's1:3', at: 300 }))
-    expect(store.entries({ from: 100, to: 300 }).map(e => e.id)).toEqual(['s1:1', 's1:2'])
+    expect(ids(store.entries({ from: 100, to: 300 }))).toEqual(['s1:1', 's1:2'])
   })
 
   it('filters by route, model, root session and session ids', () => {
@@ -85,11 +109,31 @@ describe('TallyStore', () => {
     store.upsertEntry(entry({ id: 's2:1', sessionId: 's2', rootSessionId: 'other', route: 'r2', model: 'm2', at: 2 }))
     store.upsertEntry(entry({ id: 's3:1', sessionId: 's3', at: 3 }))
     const range = { from: 0, to: 10 }
-    expect(store.entries({ ...range, route: 'r2' }).map(e => e.id)).toEqual(['s2:1'])
-    expect(store.entries({ ...range, model: 'm2' }).map(e => e.id)).toEqual(['s2:1'])
-    expect(store.entries({ ...range, rootSessionId: 'root' }).map(e => e.id)).toEqual(['s1:1', 's3:1'])
-    expect(store.entries({ ...range, sessionIds: ['s1', 's2'] }).map(e => e.id)).toEqual(['s1:1', 's2:1'])
+    expect(ids(store.entries({ ...range, route: 'r2' }))).toEqual(['s2:1'])
+    expect(ids(store.entries({ ...range, model: 'm2' }))).toEqual(['s2:1'])
+    expect(ids(store.entries({ ...range, rootSessionId: 'root' }))).toEqual(['s1:1', 's3:1'])
+    expect(ids(store.entries({ ...range, sessionIds: ['s1', 's2'] }))).toEqual(['s1:1', 's2:1'])
     expect(store.entries({ ...range, sessionIds: [] })).toEqual([])
+  })
+
+  it('reads only the usage columns, with the same filters', () => {
+    store = TallyStore.open(path)
+    store.upsertEntry(entry({ id: 's1:1', at: 1, tokens: { input: 1, cacheRead: 2, cacheWrite: 3, output: 4, reasoning: 5 } }))
+    store.upsertEntry(entry({ id: 's2:1', sessionId: 's2', rootSessionId: 'other', workspaceId: null, usageKnown: false, at: 2 }))
+    const range = { from: 0, to: 10 }
+    const rows = store.usage(range).sort((a, b) => a.at - b.at)
+    expect(rows).toEqual([
+      {
+        sessionId: 's1', workspaceId: '/work', at: 1, route: 'deepseek-official', model: 'deepseek-flash',
+        tokens: { input: 1, cacheRead: 2, cacheWrite: 3, output: 4, reasoning: 5 }, usageKnown: true,
+      },
+      {
+        sessionId: 's2', workspaceId: null, at: 2, route: 'deepseek-official', model: 'deepseek-flash',
+        tokens: { input: 100, cacheRead: 900, cacheWrite: 0, output: 50 }, usageKnown: false,
+      },
+    ])
+    expect(store.usage({ ...range, rootSessionId: 'other' }).map(r => r.sessionId)).toEqual(['s2'])
+    expect(store.usage({ ...range, sessionIds: [] })).toEqual([])
   })
 
   it('clears all tables when user_version differs', () => {
@@ -97,7 +141,7 @@ describe('TallyStore', () => {
     store.upsertEntry(entry())
     store.setCursor('s1', { lastSeq: 3, state: '{}' })
     store.close()
-    const raw = new DatabaseSync(path)
+    const raw = new sqlite.DatabaseSync(path)
     raw.exec('PRAGMA user_version = 99')
     raw.close()
     store = TallyStore.open(path)
@@ -154,7 +198,7 @@ describe('TallyStore', () => {
   it('opens in WAL mode', () => {
     store = TallyStore.open(path)
     store.upsertEntry(entry())
-    const raw = new DatabaseSync(path)
+    const raw = new sqlite.DatabaseSync(path)
     expect(raw.prepare('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' })
     raw.close()
   })
@@ -201,7 +245,7 @@ describe('TallyStore', () => {
     store = TallyStore.open(path)
     store.upsertEntry(entry())
     store.close()
-    const raw = new DatabaseSync(path)
+    const raw = new sqlite.DatabaseSync(path)
     raw.exec('DROP TABLE meta')
     raw.close()
     store = TallyStore.open(path)
@@ -261,7 +305,7 @@ describe('TallyStore', () => {
     store = TallyStore.open(path)
     store.upsertEntry(entry())
     store.close()
-    const raw = new DatabaseSync(path)
+    const raw = new sqlite.DatabaseSync(path)
     raw.exec('DROP TABLE entries')
     raw.close()
     store = TallyStore.open(path)

@@ -85,6 +85,18 @@ function quoteManual(route: string, manual: ParsedManual, model: string, usage: 
   }
 }
 
+/** An alias that points outside the catalog could never price anything, so it is refused up front. */
+function checkAliasTarget(catalog: PriceCatalog, o: Extract<ProviderPriceOverride, { kind: 'alias' }>): void {
+  const { provider: vendor, model } = o.target
+  const provider = Object.hasOwn(catalog.providers, vendor) ? catalog.providers[vendor] : undefined
+  if (!provider) {
+    throw new RangeError(`Alias price override ${o.provider}: target provider "${vendor}" is not in the price catalog`)
+  }
+  if (model !== undefined && !Object.hasOwn(provider.models, model) && !(provider.aliases && Object.hasOwn(provider.aliases, model))) {
+    throw new RangeError(`Alias price override ${o.provider}: target model "${model}" is not a model of "${vendor}" in the price catalog`)
+  }
+}
+
 export class TallyPricing implements PricingService {
   readonly #catalog: PriceCatalog
   readonly #providerRoutes: Record<string, string>
@@ -99,6 +111,7 @@ export class TallyPricing implements PricingService {
     this.#overrides = opts.overrides
     for (const o of opts.overrides) {
       if (this.#byRoute.has(o.provider)) continue
+      if (o.kind === 'alias') checkAliasTarget(catalog, o)
       this.#byRoute.set(o.provider, o)
       if (o.kind === 'manual') {
         const models = new Map<string, ParsedRates>()
@@ -186,9 +199,9 @@ export type TallyPricingServiceConfig = TallyPricingOptions
 /**
  * `ctx.tallyPricing`: the bundled catalog with the user's route mapping and overrides.
  *
- * An override that cannot be used (for example a malformed manual rate) is skipped with a
- * warning instead of failing the service; it is listed in {@link configErrors}, which
- * `ctx.tallyUsage.status()` reports.
+ * An override that cannot be used (a malformed manual rate, or an alias whose target provider
+ * or model is not in the catalog) is skipped with a warning instead of failing the service; it
+ * is listed in {@link configErrors}, which `ctx.tallyUsage.status()` reports.
  *
  * Service methods may run with `this` bound to a cordis context proxy, so this class keeps
  * no `#private` state.

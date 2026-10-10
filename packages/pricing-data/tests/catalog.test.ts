@@ -41,6 +41,19 @@ describe('validateCatalog', () => {
     expect(validateCatalog(c).length).toBeGreaterThan(0)
   })
 
+  it('rejects reasoningBilledAs "separate" until its semantics are defined', () => {
+    const c = raw()
+    c.providers.deepseek.reasoningBilledAs = 'separate'
+    const errors = validateCatalog(c)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('providers.deepseek.reasoningBilledAs')
+    expect(errors[0]).toContain('"separate" is not supported')
+    for (const ok of ['output', 'free']) {
+      c.providers.deepseek.reasoningBilledAs = ok
+      expect(validateCatalog(c)).toEqual([])
+    }
+  })
+
   it('accepts adjacent intervals', () => {
     const c = raw()
     const first = c.providers.deepseek.models['deepseek-flash'][0]

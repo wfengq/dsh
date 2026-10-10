@@ -45,7 +45,7 @@ export function apply(ctx: Context) {
 | `tally/balance-changed` | 余额快照变化 |
 | `tally/budget-crossed` | 预算达到 80% 或 100% |
 
-金额一律是十进制字符串（`Money.amount`），不使用浮点数；不同币种分开统计，不做换算。`TallyEntry.route` 是日志里的原始 provider id，`TallyEntry.provider` 是映射后的价格厂商，没有映射时两者相同。
+金额一律是十进制字符串（`Money.amount`），不使用浮点数；不同币种分开统计，不做换算。`TallyEntry.route` 是日志里的原始 provider id，`TallyEntry.provider` 是按 `providerRoutes` 映射后的价格厂商，没有映射时两者相同；它不反映价格覆盖，别名覆盖会按目标厂商计价，但 `provider` 仍是映射后的厂商。用量未知（`usageKnown: false`）的记录不报价，`cost`、`band` 和 `priceVersion` 都是 `null`。
 
 ## 版本承诺（semver）
 

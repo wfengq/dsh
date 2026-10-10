@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { DatabaseSync, type StatementSync } from 'node:sqlite'
+import { sqlite, type DatabaseSync, type StatementSync } from './sqlite.js'
 import type { TallyTokens } from 'dsh-tally-api'
 
 /** Bump together with the schema below; a mismatch drops and rebuilds every table. */
@@ -40,22 +40,18 @@ export interface Cursor {
   state: string
 }
 
-interface EntryRow {
-  id: string
-  session_id: string
-  root_session_id: string
-  workspace_id: string | null
-  at: number
-  route: string
-  model: string
-  input: number
-  cache_read: number
-  cache_write: number
-  output: number
-  reasoning: number | null
-  usage_known: number
-  deleted: number
-}
+/**
+ * What usage queries read for one entry: every field that aggregation, `session()` and the
+ * query filters use. `StoredEntry` is a superset, so full entries can be passed where rows are expected.
+ */
+export type UsageRow = Pick<StoredEntry, 'sessionId' | 'workspaceId' | 'at' | 'route' | 'model' | 'tokens' | 'usageKnown'>
+
+/** Column lists for array-mode reads; the row mappers below index into them by position. */
+const ENTRY_COLUMNS = 'id, session_id, root_session_id, workspace_id, at, route, model, input, cache_read, cache_write, output, reasoning, usage_known, deleted'
+const USAGE_COLUMNS = 'session_id, workspace_id, at, route, model, input, cache_read, cache_write, output, reasoning, usage_known'
+
+/** A row read with `setReturnArrays(true)`, in the order of its column list. */
+type ArrayRow = unknown[]
 
 const SCHEMA = `
 CREATE TABLE entries (
@@ -99,7 +95,7 @@ function isNotDatabase(error: unknown): boolean {
 
 /** Opens `path` and validates it, rebuilding the schema when `user_version` differs. */
 function openDatabase(path: string): DatabaseSync {
-  const db = new DatabaseSync(path)
+  const db = new sqlite.DatabaseSync(path)
   try {
     db.exec('PRAGMA busy_timeout = 5000')
     // WAL lets queries read while the recorder writes; NORMAL is durable enough for a rebuildable index.
@@ -230,7 +226,20 @@ export class TallyStore {
     this.#deleteMeta.run(key)
   }
 
+  /** Full entries matching `filter`, in no particular order. */
   entries(filter: EntryFilter): StoredEntry[] {
+    return this.#select(ENTRY_COLUMNS, filter).map(toEntry)
+  }
+
+  /**
+   * The usage columns of entries matching `filter`, in no particular order: the read behind
+   * `query()` and `session()`, kept to the columns they use because it can cover the whole ledger.
+   */
+  usage(filter: EntryFilter): UsageRow[] {
+    return this.#select(USAGE_COLUMNS, filter).map(toUsageRow)
+  }
+
+  #select(columns: string, filter: EntryFilter): ArrayRow[] {
     const where = ['at >= ?', 'at < ?']
     const params: Array<string | number> = [filter.from, filter.to]
     if (filter.route !== undefined) { where.push('route = ?'); params.push(filter.route) }
@@ -241,10 +250,12 @@ export class TallyStore {
       where.push(`session_id IN (${filter.sessionIds.map(() => '?').join(', ')})`)
       params.push(...filter.sessionIds)
     }
-    const rows = this.#db
-      .prepare(`SELECT * FROM entries WHERE ${where.join(' AND ')} ORDER BY at, id`)
-      .all(...params) as unknown as EntryRow[]
-    return rows.map(toEntry)
+    // No ORDER BY: no caller needs an order (aggregation groups and sorts its groups), and the
+    // planner need not sort. Array rows skip building a keyed object per row, which is most of
+    // the cost of reading a large range.
+    const statement = this.#db.prepare(`SELECT ${columns} FROM entries WHERE ${where.join(' AND ')}`)
+    statement.setReturnArrays(true)
+    return statement.all(...params) as unknown as ArrayRow[]
   }
 
   /** Drops every entry, cursor and meta value so the next scan rebuilds from the session logs. */
@@ -281,24 +292,42 @@ export class TallyStore {
   }
 }
 
-function toEntry(r: EntryRow): StoredEntry {
+function tokensOf(input: unknown, cacheRead: unknown, cacheWrite: unknown, output: unknown, reasoning: unknown): TallyTokens {
   const tokens: TallyTokens = {
-    input: r.input,
-    cacheRead: r.cache_read,
-    cacheWrite: r.cache_write,
-    output: r.output,
+    input: input as number,
+    cacheRead: cacheRead as number,
+    cacheWrite: cacheWrite as number,
+    output: output as number,
   }
-  if (r.reasoning !== null) tokens.reasoning = r.reasoning
+  if (reasoning !== null) tokens.reasoning = reasoning as number
+  return tokens
+}
+
+/** Maps a row of {@link ENTRY_COLUMNS}. */
+function toEntry(r: ArrayRow): StoredEntry {
   return {
-    id: r.id,
-    sessionId: r.session_id,
-    rootSessionId: r.root_session_id,
-    workspaceId: r.workspace_id,
-    at: r.at,
-    route: r.route,
-    model: r.model,
-    tokens,
-    usageKnown: r.usage_known === 1,
-    deleted: r.deleted === 1,
+    id: r[0] as string,
+    sessionId: r[1] as string,
+    rootSessionId: r[2] as string,
+    workspaceId: r[3] as string | null,
+    at: r[4] as number,
+    route: r[5] as string,
+    model: r[6] as string,
+    tokens: tokensOf(r[7], r[8], r[9], r[10], r[11]),
+    usageKnown: r[12] === 1,
+    deleted: r[13] === 1,
+  }
+}
+
+/** Maps a row of {@link USAGE_COLUMNS}. */
+function toUsageRow(r: ArrayRow): UsageRow {
+  return {
+    sessionId: r[0] as string,
+    workspaceId: r[1] as string | null,
+    at: r[2] as number,
+    route: r[3] as string,
+    model: r[4] as string,
+    tokens: tokensOf(r[5], r[6], r[7], r[8], r[9]),
+    usageKnown: r[10] === 1,
   }
 }

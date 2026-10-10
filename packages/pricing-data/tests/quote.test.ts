@@ -82,13 +82,21 @@ describe('quote edge cases', () => {
   })
 
   it('bills reasoning tokens according to reasoningBilledAs', () => {
-    const usage = { inputTokens: 0, outputTokens: 0, reasoningTokens: M }
+    // Reasoning tokens are a subset of outputTokens: "output" and "free" add nothing on top.
+    const usage = { inputTokens: 0, outputTokens: M, reasoningTokens: M / 2 }
     const at0 = at('2026-07-01T00:00:00Z')
-    expect(quote(make('output', [v2]), { provider: 'p', model: 'm', usage, at: at0 })!.breakdown.reasoning).toBe('0')
-    expect(quote(make('free', [v2]), { provider: 'p', model: 'm', usage, at: at0 })!.breakdown.reasoning).toBe('0')
-    const sep = quote(make('separate', [v2]), { provider: 'p', model: 'm', usage, at: at0 })!
-    expect(sep.breakdown.reasoning).toBe('4')
-    expect(sep.amount).toBe('4')
+    for (const mode of ['output', 'free'] as const) {
+      const q = quote(make(mode, [v2]), { provider: 'p', model: 'm', usage, at: at0 })!
+      expect(q.breakdown.reasoning).toBe('0')
+      expect(q.amount).toBe('4')
+    }
+  })
+
+  it('returns null for reasoningBilledAs "separate" instead of double-counting reasoning', () => {
+    const at0 = at('2026-07-01T00:00:00Z')
+    const cat = make('separate', [v2])
+    expect(quote(cat, { provider: 'p', model: 'm', usage: { inputTokens: 0, outputTokens: M, reasoningTokens: M / 2 }, at: at0 })).toBeNull()
+    expect(quote(cat, { provider: 'p', model: 'm', usage: { inputTokens: M, outputTokens: 0 }, at: at0 })).toBeNull()
   })
 
   it('returns null for cache reads without a cacheRead rate, and for unsupported tiers', () => {
