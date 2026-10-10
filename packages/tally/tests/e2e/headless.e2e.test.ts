@@ -1,11 +1,13 @@
-import { execFile, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startMockLlmServer, type MockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
 import { loadCatalog } from 'dsh-pricing-data'
+import { Config } from '../../src/index.js'
 import { TallyPricing } from '../../src/pricing-service.js'
 import { toUsage } from '../../src/query.js'
 import { TallyStore, type StoredEntry } from '../../src/store.js'
@@ -23,6 +25,13 @@ const overlayPath = fileURLToPath(new URL('./overlay.yml', import.meta.url))
 const API_KEY = 'mock-key'
 const RUN_TIMEOUT = 120_000
 
+/** The `dsh` bin of the installed CLI, run with this Node so no package-manager wrapper sits in between. */
+const dshBin = (() => {
+  const manifest = createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json')
+  const { bin } = JSON.parse(readFileSync(manifest, 'utf8')) as { bin: { dsh: string } }
+  return join(dirname(manifest), bin.dsh)
+})()
+
 interface RunResult {
   code: number | null
   signal: NodeJS.Signals | null
@@ -32,15 +41,45 @@ interface RunResult {
 
 const children = new Set<ChildProcess>()
 
+/** SIGKILL the child's whole process group, so grandchildren holding stdio open die with it. */
+function killGroup(child: ChildProcess): void {
+  if (child.pid === undefined) return
+  try {
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    // ESRCH: the group is already gone.
+  }
+}
+
+/**
+ * Run a command in its own process group. The group is killed on timeout and once the
+ * direct child exited, so a lingering grandchild can neither outlive the test nor keep
+ * stdio (and with it the result) open.
+ */
 function run(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<RunResult> {
   return new Promise((resolve) => {
-    const child = execFile(command, args, { cwd: repoRoot, env, timeout: RUN_TIMEOUT, killSignal: 'SIGKILL' },
-      (error, stdout, stderr) => {
-        children.delete(child)
-        const code = error === null ? 0 : typeof error.code === 'number' ? error.code : null
-        resolve({ code, signal: error?.signal ?? null, stdout, stderr })
-      })
+    const child = spawn(command, args, { cwd: repoRoot, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
     children.add(child)
+    let stdout = ''
+    let stderr = ''
+    child.stdout!.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
+    child.stderr!.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
+    const timer = setTimeout(() => {
+      stderr += `\n[e2e: killed process group after ${RUN_TIMEOUT}ms]`
+      killGroup(child)
+    }, RUN_TIMEOUT)
+    const settle = (code: number | null, signal: NodeJS.Signals | null) => {
+      clearTimeout(timer)
+      children.delete(child)
+      resolve({ code, signal, stdout, stderr })
+    }
+    child.on('error', (error) => {
+      stderr += `\n[e2e: spawn failed: ${error.message}]`
+      settle(null, null)
+    })
+    // Once the direct child exited, anything left in its group is a straggler holding stdio open.
+    child.on('exit', () => killGroup(child))
+    child.on('close', settle)
   })
 }
 
@@ -78,14 +117,14 @@ describe('dsh-tally in the real dsh headless profile', () => {
   })
 
   afterAll(async () => {
-    for (const child of children) child.kill('SIGKILL')
+    for (const child of children) killGroup(child)
     children.clear()
     await server?.close()
     if (home) rmSync(home, { recursive: true, force: true })
   })
 
   const headless = (task: string) =>
-    run('pnpm', ['exec', 'dsh', '--profile', 'headless', '--patch', overlayPath, task], env)
+    run(process.execPath, [dshBin, '--profile', 'headless', '--patch', overlayPath, task], env)
 
   function readEntries(): StoredEntry[] {
     const store = TallyStore.open(dbPath)
@@ -113,9 +152,11 @@ describe('dsh-tally in the real dsh headless profile', () => {
     expect(first!.tokens.input).toBe(3)
 
     // Known usage must be priceable by the same catalog and route mapping the plugin uses.
+    // The plugin's own schema defaults (`providerRoutes`, `overrides`), as the overlay mounts it without config.
+    const defaults = Config({} as Config)
     const pricing = new TallyPricing(loadCatalog(), {
-      providerRoutes: { 'deepseek-official': 'deepseek', 'deepseek-account': 'deepseek' },
-      overrides: [],
+      providerRoutes: defaults.providerRoutes,
+      overrides: defaults.overrides,
     })
     for (const e of entries) {
       if (e.usageKnown) expect(pricing.quoteRoute(e.route, e.model, toUsage(e.tokens), e.at), e.id).not.toBeNull()

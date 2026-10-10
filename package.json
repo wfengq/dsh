@@ -6,6 +6,7 @@
     "build": "pnpm -r run build",
     "pretest": "pnpm -r run build",
     "test": "vitest run",
+    "pretest:e2e": "pnpm -r run build",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "pretypecheck": "pnpm -r run build",
