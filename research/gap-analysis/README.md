@@ -1,6 +1,6 @@
 # DSH 插件生态缺口分析（2026-10-10）
 
-目的：找出一个能成为 DeepSeek Harness（dsh）生态里“不可缺少的一环”的插件方向。结论和选型依据记录在设计文档 [`docs/superpowers/specs/2026-10-10-dsh-ledger-design.md`](../../docs/superpowers/specs/2026-10-10-dsh-ledger-design.md) 里，本文只记录数据和方法，方便复核。
+目的：找出一个能成为 DeepSeek Harness（dsh）生态里“不可缺少的一环”的插件方向。结论和选型依据记录在设计文档 [`docs/superpowers/specs/2026-10-10-dsh-tally-design.md`](../../docs/superpowers/specs/2026-10-10-dsh-ledger-design.md) 里，本文只记录数据和方法，方便复核。
 
 ## 数据来源
 
