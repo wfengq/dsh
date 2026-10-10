@@ -33,6 +33,11 @@ describe('resolveBand', () => {
     expect(resolveBand(W, H, sh('2027-03-06T10:00:00.000'))).toEqual({ band: 'offpeak', holidayCalendarMissing: false }) // Saturday
   })
 
+  it('does not flag a weekday off-peak result in a missing calendar year', () => {
+    expect(resolveBand(W, H, sh('2027-03-03T12:30:00.000'))).toEqual({ band: 'offpeak', holidayCalendarMissing: false }) // Wednesday lunch
+    expect(resolveBand(W, H, sh('2027-03-03T20:00:00.000'))).toEqual({ band: 'offpeak', holidayCalendarMissing: false })
+  })
+
   it('flags a missing calendar id as well as a missing year', () => {
     expect(resolveBand(W, {}, sh('2026-10-14T10:00:00.000'))).toEqual({ band: 'peak', holidayCalendarMissing: true })
   })

@@ -23,7 +23,7 @@ DeepSeek Harness 插件族使用的模型价格数据包：内置价格目录（
 
 ## 节假日日历
 
-`catalog.json` 的 `holidays.CN.years` 目前为空，年份数据要等拿到国务院办公厅的放假通知后再录入。在此之前，高峰规则生效的工作日（周一至周五）的报价会带上 `holidayCalendarMissing: true`，表示节假日可能被当作高峰价计算，金额可能偏高；周末的报价不受影响，也不带该标记。
+`catalog.json` 的 `holidays.CN.years` 目前为空，年份数据要等拿到国务院办公厅的放假通知后再录入。在此之前，落在高峰时段的报价（band 为 `peak`）会带上 `holidayCalendarMissing: true`，表示当天可能是节假日、实际应按空闲价计算，金额可能偏高；空闲时段和周末的报价不带该标记。
 
 ## 用法
 

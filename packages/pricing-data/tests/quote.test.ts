@@ -13,11 +13,11 @@ describe('quote', () => {
       .toMatchObject({ amount: '10.04', currency: 'CNY', band: 'peak', priceVersion: 'deepseek-flash@2026-10-10', holidayCalendarMissing: true })
   })
 
-  it('omits holidayCalendarMissing on days outside the peak weekdays', () => {
+  it('flags holidayCalendarMissing only on peak quotes (off-peak and weekend quotes omit it)', () => {
     const q = quote(c, { provider: 'deepseek', model: 'deepseek-flash', usage: u, at: sh('2026-10-14T12:30:00.000') })!
     expect(q.amount).toBe('5.02')
     expect(q.band).toBe('offpeak')
-    expect(q.holidayCalendarMissing).toBe(true) // weekday, calendar still missing
+    expect('holidayCalendarMissing' in q).toBe(false) // weekday, calendar missing, but off-peak: nothing to overestimate
     const weekend = quote(c, { provider: 'deepseek', model: 'deepseek-v4-pro', usage: u, at: sh('2026-10-17T10:00:00.000') })!
     expect('holidayCalendarMissing' in weekend).toBe(false)
   })

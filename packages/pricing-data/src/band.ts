@@ -66,5 +66,6 @@ export function resolveBand(windows: PeakWindows | undefined, holidays: HolidayC
     const [start, end] = parseRange(range)
     return local.minutes >= start && local.minutes < end
   })
-  return { band: inPeak ? 'peak' : 'offpeak', holidayCalendarMissing }
+  // A missing calendar can only turn a peak into off-peak, so it only matters (price may be overestimated) for peak results.
+  return inPeak ? { band: 'peak', holidayCalendarMissing } : { band: 'offpeak', holidayCalendarMissing: false }
 }
