@@ -125,6 +125,47 @@ export class TallyPricing implements PricingService {
     return quote(this.#catalog, { provider: this.providerOf(route), model, usage, at })
   }
 
+  /**
+   * Whether prices for (route, model) are guaranteed constant inside every `bucketMs`-aligned
+   * epoch bucket, apart from time zone offset changes. Returns the IANA time zones whose offset
+   * the caller must still check per bucket, or `null` when it cannot be guaranteed (the caller
+   * must then use `quoteRoute` for every entry).
+   *
+   * Guaranteed when every price version that can apply has `effectiveFrom`/`effectiveTo` on a
+   * bucket boundary and every peak-window boundary falls on a bucket boundary of local time
+   * (`bucketMs` must be a whole number of minutes). With a UTC offset that is a bucket multiple
+   * and constant across the bucket, local-time boundaries are then also bucket boundaries, and
+   * weekdays and holiday dates (which change at local midnight) cannot change inside a bucket.
+   */
+  bucketStableZones(route: string, model: string, bucketMs: number): string[] | null {
+    const override = this.#byRoute.get(route)
+    if (override?.kind === 'manual') return []
+    const target = override?.kind === 'alias'
+      ? { provider: override.target.provider, model: override.target.model ?? model }
+      : { provider: this.providerOf(route), model }
+    const provider = Object.hasOwn(this.#catalog.providers, target.provider) ? this.#catalog.providers[target.provider] : undefined
+    if (!provider) return []
+    const aliased = provider.aliases && Object.hasOwn(provider.aliases, target.model) ? provider.aliases[target.model] : target.model
+    const versions = Object.hasOwn(provider.models, aliased) ? provider.models[aliased] : undefined
+    const bucketMinutes = bucketMs / 60_000
+    const zones = new Set<string>()
+    for (const v of versions ?? []) {
+      for (const iso of [v.effectiveFrom, v.effectiveTo]) {
+        if (iso === undefined) continue
+        const t = Date.parse(iso)
+        if (!Number.isFinite(t) || t % bucketMs !== 0) return null
+      }
+      if (!v.windows) continue
+      zones.add(v.windows.tz)
+      for (const range of v.windows.peak) {
+        const m = /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(range)
+        if (!m) return null
+        if ((Number(m[1]) * 60 + Number(m[2])) % bucketMinutes !== 0 || (Number(m[3]) * 60 + Number(m[4])) % bucketMinutes !== 0) return null
+      }
+    }
+    return [...zones]
+  }
+
   quote(q: { provider: string; model: string; usage: TokenCounts; at: number }): Quote | null {
     return this.quoteRoute(q.provider, q.model, q.usage, q.at)
   }

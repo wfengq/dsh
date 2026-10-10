@@ -26,6 +26,33 @@ const MAIN_PROBE: TokenCounts = { ...ZERO_USAGE, inputTokens: 1_000_000, cacheRe
 const CACHE_WRITE_PROBE: TokenCounts = { ...ZERO_USAGE, cacheWriteTokens: 1_000_000 }
 const REASONING_PROBE: TokenCounts = { ...ZERO_USAGE, reasoningTokens: 1_000_000 }
 
+const offsetFormatters = new Map<string, Intl.DateTimeFormat>()
+
+/** UTC offset of `tz` at `at`, in whole milliseconds of local-minus-UTC (seconds resolution). */
+function utcOffsetMs(tz: string, at: number): number {
+  let fmt = offsetFormatters.get(tz)
+  if (fmt === undefined) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
+    })
+    offsetFormatters.set(tz, fmt)
+  }
+  const p: Record<string, number> = {}
+  for (const part of fmt.formatToParts(at)) if (part.type !== 'literal') p[part.type] = Number(part.value)
+  const local = Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second)
+  return local - Math.floor(at / 1000) * 1000
+}
+
+/**
+ * True when `tz` has the same offset at both ends of the bucket and that offset is a whole
+ * number of buckets, so local-time boundaries on a bucket multiple are bucket boundaries in UTC.
+ */
+function offsetStable(tz: string, bucket: number): boolean {
+  const start = bucket * RATE_BUCKET_MS
+  const a = utcOffsetMs(tz, start)
+  return a % RATE_BUCKET_MS === 0 && a === utcOffsetMs(tz, start + RATE_BUCKET_MS - 1)
+}
+
 /** Per-million-token rates (18-dp units) that one request is billed at, plus the currency. */
 interface RateCard {
   currency: Money['currency']
@@ -40,9 +67,13 @@ interface RateCard {
 
 /**
  * Memoises the rate card per (route, model, 15-minute bucket) so aggregating a large ledger does
- * not re-run band resolution and decimal parsing for every entry. A bucket is only cached when
- * the price version, band and currency are identical at both of its ends, so quotes that
- * straddle a price change or a peak boundary always take the exact `quoteRoute` path.
+ * not re-run band resolution and decimal parsing for every entry. A (route, model) is cached only
+ * when `TallyPricing.bucketStableZones` proves every price-version and peak-window boundary is
+ * aligned to the bucket size, and a bucket only when each involved time zone has a constant,
+ * bucket-aligned UTC offset across it; everything else takes the exact `quoteRoute` path.
+ * Under those conditions the price is constant within a bucket, so the cached path is identical
+ * to `quoteRoute`. (The version/band/currency comparison of the two bucket ends below is a
+ * belt-and-braces check.)
  * Rates are read from probe quotes of 1,000,000 tokens, whose breakdown equals the per-million
  * rate of each dimension (reasoning is `0` unless billed separately); a probe that quotes `null`
  * means that dimension has no rate. Cache write and reasoning are probed on their own because
@@ -50,7 +81,7 @@ interface RateCard {
  */
 class RateCache {
   readonly #pricing: TallyPricing
-  readonly #byRouteModel = new Map<string, Map<number, RateCard | null>>()
+  readonly #byRouteModel = new Map<string, { zones: string[] | null; buckets: Map<number, RateCard | null> }>()
 
   constructor(pricing: TallyPricing) {
     this.#pricing = pricing
@@ -79,13 +110,17 @@ class RateCache {
 
   #card(route: string, model: string, at: number): RateCard | null {
     const key = route + '\0' + model
-    let buckets = this.#byRouteModel.get(key)
-    if (buckets === undefined) this.#byRouteModel.set(key, buckets = new Map())
+    let slot = this.#byRouteModel.get(key)
+    if (slot === undefined) {
+      slot = { zones: this.#pricing.bucketStableZones(route, model, RATE_BUCKET_MS), buckets: new Map() }
+      this.#byRouteModel.set(key, slot)
+    }
+    if (slot.zones === null) return null
     const bucket = Math.floor(at / RATE_BUCKET_MS)
-    const hit = buckets.get(bucket)
+    const hit = slot.buckets.get(bucket)
     if (hit !== undefined) return hit
-    const card = this.#probe(route, model, bucket)
-    buckets.set(bucket, card)
+    const card = slot.zones.every(tz => offsetStable(tz, bucket)) ? this.#probe(route, model, bucket) : null
+    slot.buckets.set(bucket, card)
     return card
   }
 

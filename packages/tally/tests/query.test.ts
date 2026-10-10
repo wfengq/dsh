@@ -198,4 +198,63 @@ describe('aggregate rate caching', () => {
     expect(g.unpricedCount).toBe(unpriced)
     expect(g.cost).toEqual([{ amount: frac ? `${whole}.${frac}` : `${whole}`, currency: 'USD' }])
   })
+
+  it('stays identical to quoteRoute when the band flips and flips back inside one bucket', () => {
+    const flip: PriceCatalog = {
+      ...catalog,
+      providers: {
+        v: {
+          ...catalog.providers.v,
+          reasoningBilledAs: 'output',
+          models: {
+            m: [{
+              id: 'm@1',
+              effectiveFrom: '2026-10-01T00:00:00Z',
+              windows: { tz: 'UTC', peak: ['09:00-09:05', '09:10-12:00'], days: [1, 2, 3, 4, 5, 6, 7] },
+              rates: { peak: { input: '10', cacheRead: '1', output: '10' }, offpeak: { input: '1', cacheRead: '0.1', output: '1' } },
+              source: src,
+            }],
+          },
+        },
+      },
+    }
+    const p = new TallyPricing(flip, { providerRoutes: {}, overrides: [] })
+    const at = Date.parse('2026-10-14T09:07:00Z')
+    const e = entry({ route: 'v', model: 'm', at, tokens: { input: M, cacheRead: 0, cacheWrite: 0, output: 0 } })
+    expect(p.quoteRoute('v', 'm', { inputTokens: M, outputTokens: 0 }, at)?.amount).toBe('1')
+    const entries = [e]
+    for (let min = 0; min < 30; min++) entries.push({ ...e, id: `f:${min}`, at: Date.parse('2026-10-14T09:00:00Z') + min * 60_000 })
+    let expected = 0
+    for (const x of entries) expected += Number(p.quoteRoute('v', 'm', { inputTokens: M, outputTokens: 0 }, x.at)!.amount)
+    const [g] = aggregate(entries, p, 'model', 'UTC')
+    expect(g.cost).toEqual([{ amount: String(expected), currency: 'USD' }])
+  })
+
+  it('does not use the cache for unaligned zone offsets but still matches quoteRoute', () => {
+    const odd: PriceCatalog = {
+      ...catalog,
+      providers: {
+        v: {
+          ...catalog.providers.v,
+          models: {
+            m: [{
+              id: 'm@1',
+              effectiveFrom: '2026-10-01T00:00:00Z',
+              windows: { tz: 'Asia/Kathmandu', peak: ['09:00-12:00'], days: [1, 2, 3, 4, 5, 6, 7] },
+              rates: { peak: { input: '10', cacheRead: '1', output: '10' }, offpeak: { input: '1', cacheRead: '0.1', output: '1' } },
+              source: src,
+            }],
+          },
+        },
+      },
+    }
+    const p = new TallyPricing(odd, { providerRoutes: {}, overrides: [] })
+    const entries: StoredEntry[] = []
+    for (let min = 0; min < 24 * 60; min += 5) {
+      entries.push(entry({ id: `k:${min}`, route: 'v', model: 'm', at: Date.parse('2026-10-14T00:00:00Z') + min * 60_000, tokens: { input: M, cacheRead: 0, cacheWrite: 0, output: 0 } }))
+    }
+    let expected = 0
+    for (const x of entries) expected += Number(p.quoteRoute('v', 'm', { inputTokens: M, outputTokens: 0 }, x.at)!.amount)
+    expect(aggregate(entries, p, 'model', 'UTC')[0].cost).toEqual([{ amount: String(expected), currency: 'USD' }])
+  })
 })
