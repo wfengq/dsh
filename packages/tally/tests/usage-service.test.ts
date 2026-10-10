@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context, Service, type Message } from '@deepseek-ai/cordis'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { interruptedTurnClosers, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type { TallyEntry } from 'dsh-tally-api'
 import * as tally from '../src/index.js'
 import type { TallyUsage } from '../src/usage-service.js'
@@ -17,6 +17,8 @@ interface FakeSession {
   events: SessionEvent[]
   /** Thrown by `readSession`. */
   error?: Error
+  /** Listed as live: read as-is. Otherwise read like a cold log, with synthetic interrupted-turn closers. */
+  live?: boolean
 }
 
 /** Minimal stand-in for the official `sessionQuery` service. */
@@ -32,7 +34,7 @@ class FakeSessionQuery extends Service {
 
   async listSessions(signal?: AbortSignal) {
     this.listSignal = signal
-    return this.sessions.map(s => ({ header: s.header, live: false, persisted: true }))
+    return this.sessions.map(s => ({ header: s.header, live: s.live === true, persisted: true }))
   }
 
   async readSession(id: string) {
@@ -41,7 +43,22 @@ class FakeSessionQuery extends Service {
     const s = this.sessions.find(x => x.header.id === id)
     if (!s) throw new Error('not found')
     if (s.error) throw s.error
-    return { session: s.header, inheritedEventCount: s.inheritedEventCount, events: s.events }
+    // Like the official cold read, a non-live log gets synthetic closers for an open tail turn.
+    const events = s.live === true ? s.events : [...s.events, ...interruptedTurnClosers(s.events)]
+    return { session: s.header, inheritedEventCount: s.inheritedEventCount, events }
+  }
+}
+
+/** Minimal stand-in for the official live session store (`ctx.sessions`). */
+class FakeSessions extends Service {
+  live = new Map<string, { header: FakeSession['header'] }>()
+
+  constructor(ctx: Context) {
+    super(ctx, 'sessions')
+  }
+
+  get(id: string) {
+    return this.live.get(id)
   }
 }
 
@@ -78,6 +95,12 @@ afterEach(async () => {
 })
 
 const fibers: Array<{ dispose(): Promise<void> }> = []
+
+/** Dispose the loaded plugin (closing its store) and load it again on the same database. */
+async function restart(config: Partial<tally.Config> = {}): Promise<TallyUsage> {
+  await fibers.pop()!.dispose()
+  return load(config)
+}
 
 async function load(config: Partial<tally.Config> = {}): Promise<TallyUsage> {
   const fiber = ctx.plugin(tally, { dbPath: join(dir, 'tally.v1.sqlite'), ...config })
@@ -124,8 +147,11 @@ function liveSession(id: string) {
 describe('dsh-tally plugin', () => {
   it('backfills history, records live events, and rebuilds to the same ledger', async () => {
     query.sessions = corpus()
+    const recorded: TallyEntry[] = []
+    ctx.on('tally/recorded', e => { recorded.push(e) })
     const usage = await load()
     await usage.idle()
+    expect(recorded).toEqual([]) // history is not pushed as new requests
 
     const status = usage.status()
     expect(status.errors).toHaveLength(1)
@@ -139,8 +165,6 @@ describe('dsh-tally plugin', () => {
     const fork = bySession.find(g => g.key === 'fork')!
     expect(fork.tokens).toEqual({ input: 10, cacheRead: 0, cacheWrite: 0, output: 5 })
 
-    const recorded: TallyEntry[] = []
-    ctx.on('tally/recorded', e => { recorded.push(e) })
     const live = liveSession('live')
     for (let i = 0; i < live.all.length; i++) live.emitNext(ctx)
     expect(recorded).toHaveLength(1)
@@ -172,6 +196,7 @@ describe('dsh-tally plugin', () => {
     query.sessions.push(session('live', live.all, 0, { cwd: '/live' }))
     await usage.rebuild()
     expect(await count()).toBe(4)
+    expect(recorded).toHaveLength(1) // a rebuild pushes nothing either
     expect(usage.status().errors).toHaveLength(1)
     expect(usage.status().backfill).toEqual({ done: 4, total: 4 })
   })
@@ -240,6 +265,68 @@ describe('dsh-tally plugin', () => {
     for (const event of all) ctx.emit('session/event' as never, fake as never, event as never)
     expect(recorded).toHaveLength(1)
     expect(recorded[0]).toMatchObject({ usageKnown: false, cost: null, tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } })
+  })
+
+  it('does not record synthetic closers of a cold log, so the real tail is recorded later', async () => {
+    const full = seqd([
+      ...turn(1), turnStart(2), header('deepseek-official', 'deepseek-flash'), stepStart(2, 1),
+      message(2, 1, U2), stepEnd(2, 1), turnEnd(2),
+    ])
+    // The writer is mid-turn: the log ends at step/start (seq 8); a cold read appends step/end + turn/end.
+    const cold = session('cold', full.slice(0, 9))
+    query.sessions = [cold]
+    const usage = await load()
+    await usage.idle()
+    const count = async (u: TallyUsage) => (await u.query({ from: 0, to: Date.now() + 1, groupBy: 'model' }))
+      .reduce((n, g) => n + g.requestCount, 0)
+    expect(await count(usage)).toBe(1)
+
+    // The other process later writes the real message at seq 9 and closes the turn.
+    cold.events = full
+    const next = await restart()
+    await next.idle()
+    expect(query.reads).toEqual(['cold', 'cold'])
+    expect(await count(next)).toBe(2)
+  })
+
+  it('after the first full backfill only reads new and mid-turn sessions; rebuild reads all', async () => {
+    const midLog = seqd([...turn(1), turnStart(2), header('deepseek-official', 'deepseek-flash'), stepStart(2, 1), message(2, 1, U2)])
+    query.sessions = [session('done', seqd(turn(1))), session('mid', midLog)]
+    let usage = await load()
+    await usage.idle()
+    expect(query.reads).toEqual(['done', 'mid'])
+
+    query.reads = []
+    query.sessions.push(session('new', seqd(turn(1))))
+    usage = await restart()
+    await usage.idle()
+    expect(query.reads).toEqual(['mid', 'new'])
+    expect(usage.status().backfill).toEqual({ done: 2, total: 2 })
+
+    query.reads = []
+    await usage.rebuild()
+    expect(query.reads).toEqual(['done', 'mid', 'new'])
+    expect(usage.status().backfill).toEqual({ done: 3, total: 3 })
+  })
+
+  it('resolves a sub-agent root through a parent that is only live', async () => {
+    await ctx.plugin(FakeSessions)
+    const sessions = ctx.get('sessions') as unknown as FakeSessions
+    sessions.live.set('p', { header: { id: 'p', createdAt: 0 } })
+    const usage = await load()
+    await usage.idle()
+    const recorded: TallyEntry[] = []
+    ctx.on('tally/recorded', e => { recorded.push(e) })
+    const all = seqd(turn(1))
+    const fake = {
+      id: 'kid',
+      header: { id: 'kid', createdAt: 0, origin: 'subagent', parentSession: 'p' },
+      inheritedEventCount: 0,
+      isOwnSeq: () => true,
+      ownEvents: () => all,
+    }
+    for (const event of all) ctx.emit('session/event' as never, fake as never, event as never)
+    expect(recorded.map(e => [e.sessionId, e.rootSessionId])).toEqual([['kid', 'p']])
   })
 
   it('ignores an invalid price override, logs it and reports it in status', async () => {

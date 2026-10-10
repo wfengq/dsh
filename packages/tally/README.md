@@ -12,7 +12,14 @@ DeepSeek Harness（dsh）的记账插件：从会话日志里读出每一次计�
 dsh plugin --profile web add dsh-tally
 ```
 
-插件需要 Node.js `>=22.19.0`（使用内置的 `node:sqlite`）。安装后第一次启动会在后台回填全部历史会话，回填期间实时记账照常进行，不影响 dsh 启动。
+插件需要 Node.js `>=22.19.0`（使用内置的 `node:sqlite`）。
+
+回填在后台进行，不阻塞 dsh 启动，回填期间实时记账照常进行：
+
+- **安装后第一次启动**：分批读取全部历史会话，完成后在账本里记下“回填已完成”。
+- **之后每次启动**：只读取账本里还没有记录的会话（例如插件停用期间新建的会话、上次读取失败的会话），以及上次停在某一轮对话中间的会话；已经完整记账的会话不再读取。
+- 回填进度和出错的会话可以通过 `ctx.tallyUsage.status()` 查看。
+- 限制：如果另一个 dsh 进程在一个已经完整记账的会话里继续对话，本进程要等这个会话在本进程里再次产生事件、或执行 `rebuild()` 之后才会补记。
 
 ## 配置项
 
@@ -68,7 +75,9 @@ overrides:
 - **子代理会话**照常计费，归到最近的非子代理祖先名下（`rootSessionId`）。分叉会话的 `rootSessionId` 是它自己。
 - **金额不入库**。账本只存 token 数、路由、模型和计费时间，查询时按当前价格数据现算，所以价格数据被修正后，历史金额会自动更正。
 - **金额一律是十进制字符串**，内部用 BigInt 定点运算，不使用浮点数。不同币种分开统计，不做换算。查不到价格时返回 `null`，永远不会当作 `"0"`。
-- **重建**：`ctx.tallyUsage.rebuild()` 清空账本后从全部会话日志重新回填。数据库 schema 版本不一致时也会自动删库重建。
+- **重建**：`ctx.tallyUsage.rebuild()` 清空账本（包括“回填已完成”标记）后从全部会话日志重新回填。数据库 schema 版本不一致时也会自动删库重建。
+- **未结束的对话**：读取一个停在对话中间的会话时，会话查询服务会在日志末尾补上表示“中断”的结束事件，方便展示。账本不记录这些补出来的事件，等写入方之后写下真实的结束事件时再继续记账，不会漏记。
+- **`tally/recorded` 事件只在实时记账时发出**，即一次请求结算的时候；回填和重建写入的历史账目不发事件，需要历史数据时请用 `query` 或 `session` 查询。
 
 已删除会话的处理（账目保留并标记删除，汇总金额不减少）将在后续版本中接入。
 
@@ -101,7 +110,7 @@ export function apply(ctx: Context) {
       console.log(g.key, g.requestCount, g.cost.map(m => `${m.amount} ${m.currency}`).join(' + '))
     }
 
-    // 每写入一条新账目触发一次（包括回填出来的历史账目）
+    // 实时记账时每结算一次请求触发一次；回填和重建的历史账目不触发
     ctx.on('tally/recorded', (entry) => {
       if (entry.cost) console.log(entry.sessionId, entry.model, entry.band, entry.cost.amount, entry.cost.currency)
       else console.log(entry.sessionId, entry.model, entry.usageKnown ? '无价格' : '用量未知')

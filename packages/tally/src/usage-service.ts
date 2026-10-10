@@ -1,10 +1,11 @@
 import { Service, type Context } from '@deepseek-ai/cordis'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 // Declares `ctx.sessionQuery` on the cordis Context.
 import type {} from '@deepseek-ai/dsh-session-query'
 import type {
   SessionUsage, TallyEntry, TallyStatus, UsageGroup, UsageQuery, UsageService,
 } from 'dsh-tally-api'
+import { withoutInterruptedClosers } from './cold-log.js'
 import { TallyPricing, type TallyPricingService } from './pricing-service.js'
 import { aggregate, sessionUsage, toUsage } from './query.js'
 import { Recorder, type SessionHeaderLike } from './recorder.js'
@@ -22,6 +23,11 @@ const MAX_ERRORS = 100
 
 const ALL_TIME = { from: Number.MIN_SAFE_INTEGER, to: Number.MAX_SAFE_INTEGER }
 
+/** Meta key set once a backfill pass over every listed session has finished. */
+const BACKFILL_COMPLETE = 'backfillComplete'
+
+const nextTick = () => new Promise<void>(resolve => setImmediate(resolve))
+
 interface BackfillRun {
   controller: AbortController
   /** Settles (never rejects) once the run stopped; a run always finishes the batch it read. */
@@ -37,6 +43,8 @@ interface UsageState {
   rebuilding: Promise<void>
   progress: { done: number; total: number } | null
   errors: TallyStatus['errors']
+  /** `ctx.sessions` while it is available, for headers of live sessions not yet listed. */
+  sessions: SessionStore | undefined
 }
 
 function messageOf(error: unknown): string {
@@ -50,10 +58,12 @@ function hostTimeZone(): string {
 /**
  * `ctx.tallyUsage`: the cost ledger.
  *
- * Live: every own `session/event` is folded into the ledger right away. History: after the
- * service starts, a background backfill replays every session from `ctx.sessionQuery` in
- * batches. Both write through the same per-session cursor and the `(sessionId, seq)` key, so
- * they merge without duplicates in any order.
+ * Live: every own `session/event` is folded into the ledger right away and announced with
+ * `tally/recorded`. History: after the service starts, a background backfill replays sessions
+ * from `ctx.sessionQuery` in batches, without announcing them. The first pass reads every
+ * session; once it completed, later starts read only sessions without a cursor or stopped
+ * inside a turn. Both paths write through the same per-session cursor and the
+ * `(sessionId, seq)` key, so they merge without duplicates in any order.
  */
 export class TallyUsage extends Service implements UsageService {
   static inject = ['sessionQuery', 'tallyPricing']
@@ -68,7 +78,11 @@ export class TallyUsage extends Service implements UsageService {
     super(ctx, 'tallyUsage')
     this.batchSize = Math.max(1, Math.floor(config.backfillBatch))
     this.store = TallyStore.open(config.dbPath)
-    this.recorder = new Recorder(this.store, e => this.emitRecorded(e), id => this.headers.get(id))
+    this.recorder = new Recorder(
+      this.store,
+      e => this.emitRecorded(e),
+      id => this.headers.get(id) ?? this.state.sessions?.get(id as SessionId)?.header,
+    )
     let started!: () => void
     const state: UsageState = this.state = {
       lifetime: new AbortController(),
@@ -77,9 +91,12 @@ export class TallyUsage extends Service implements UsageService {
       rebuilding: Promise.resolve(),
       progress: null,
       errors: [],
+      sessions: undefined,
     }
 
-    // Registered first so it runs last: listeners and the timer are gone before the store closes.
+    // Disposal aborts synchronously; the live path, the backfill timer and rebuild all check the
+    // abort signal before touching the store, and the store closes only after the in-flight
+    // backfill or rebuild settled (a backfill finishes recording the batch it already read).
     ctx.effect(() => async () => {
       state.lifetime.abort(new Error('dsh-tally: tallyUsage disposed'))
       for (;;) {
@@ -90,6 +107,15 @@ export class TallyUsage extends Service implements UsageService {
       this.store.close()
     }, 'tallyUsage lifecycle')
 
+    // Optional: the live session store resolves sub-agent parents that are not listed yet.
+    ctx.inject(['sessions'], (inner) => {
+      const sessions = inner.sessions
+      state.sessions = sessions
+      inner.effect(() => () => {
+        if (state.sessions === sessions) state.sessions = undefined
+      }, 'tallyUsage sessions binding')
+    })
+
     ctx.on('session/created', (session) => {
       this.headers.set(session.id, session.header)
     })
@@ -99,7 +125,7 @@ export class TallyUsage extends Service implements UsageService {
     ctx.effect(() => {
       const timer = setTimeout(() => {
         started()
-        if (state.run === undefined && !state.lifetime.signal.aborted) this.startBackfill()
+        if (state.run === undefined && !state.lifetime.signal.aborted) this.startBackfill(false)
       }, 0)
       return () => {
         clearTimeout(timer)
@@ -128,7 +154,7 @@ export class TallyUsage extends Service implements UsageService {
     return sessionUsage(entries, sessionId, this.pricing())
   }
 
-  /** Drop the whole ledger and replay every session log; resolves when the replay finished. */
+  /** Drop the whole ledger and replay every session log; resolves when the replay finished. Emits no `tally/recorded`. */
   rebuild(): Promise<void> {
     const state = this.state
     const next = state.rebuilding.catch(() => {}).then(async () => {
@@ -140,7 +166,7 @@ export class TallyUsage extends Service implements UsageService {
       this.store.reset()
       state.errors = []
       state.progress = null
-      await this.startBackfill().done
+      await this.startBackfill(true).done
     })
     state.rebuilding = next
     return next
@@ -207,43 +233,56 @@ export class TallyUsage extends Service implements UsageService {
     }
   }
 
-  private startBackfill(): BackfillRun {
+  private startBackfill(full: boolean): BackfillRun {
     const controller = new AbortController()
     const signal = AbortSignal.any([this.state.lifetime.signal, controller.signal])
-    const run: BackfillRun = { controller, done: this.backfill(signal) }
+    const run: BackfillRun = { controller, done: this.backfill(signal, full) }
     this.state.run = run
     return run
   }
 
-  private async backfill(signal: AbortSignal): Promise<void> {
+  /**
+   * Replay sessions into the ledger. A full pass reads every listed session; otherwise (after
+   * a full pass completed once) only sessions without a cursor or stopped inside a turn.
+   */
+  private async backfill(signal: AbortSignal, full: boolean): Promise<void> {
     const state = this.state
     try {
       const query = this.ctx.sessionQuery
       const records = await query.listSessions(signal)
       if (signal.aborted) return
       for (const record of records) this.headers.set(record.header.id, record.header)
-      const progress = { done: 0, total: records.length }
+      const all = full || this.store.getMeta(BACKFILL_COMPLETE) === undefined
+      const todo = all ? records : records.filter(r => !this.recorder.isSettled(r.header.id))
+      const progress = { done: 0, total: todo.length }
       state.progress = progress
-      for (let i = 0; i < records.length && !signal.aborted; i += this.batchSize) {
-        const batch = records.slice(i, i + this.batchSize)
+      for (let i = 0; i < todo.length && !signal.aborted; i += this.batchSize) {
+        const batch = todo.slice(i, i + this.batchSize)
         const reads = await Promise.allSettled(batch.map(r => query.readSession(r.header.id)))
         // A batch that was read is always recorded, so disposal waits for at most one batch.
-        reads.forEach((read, k) => {
+        for (let k = 0; k < batch.length; k++) {
+          if (k > 0) await nextTick()
+          const read = reads[k]!
           const id: string = batch[k]!.header.id
           if (read.status === 'rejected') {
             this.fail(id, read.reason)
-            return
+          } else {
+            const log = read.value
+            this.headers.set(id, log.session)
+            // A cold read closes an open tail turn with synthetic events; never record those.
+            // (Stripping is applied to every read: an exact match is only ever such closers.)
+            const own = withoutInterruptedClosers(log.events).filter(e => e.seq >= log.inheritedEventCount)
+            try {
+              this.recorder.ingest(id, log.session, own, { notify: false })
+            } catch (error) {
+              this.fail(id, error)
+            }
           }
-          const log = read.value
-          this.headers.set(id, log.session)
-          try {
-            this.recorder.ingest(id, log.session, log.events.filter(e => e.seq >= log.inheritedEventCount))
-          } catch (error) {
-            this.fail(id, error)
-          }
-        })
-        progress.done += batch.length
+          progress.done++
+        }
+        await nextTick()
       }
+      if (!signal.aborted) this.store.setMeta(BACKFILL_COMPLETE, String(Date.now()))
     } catch (error) {
       if (!signal.aborted) this.fail(undefined, new Error(`Backfill failed: ${messageOf(error)}`))
     }

@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -149,6 +149,65 @@ describe('TallyStore', () => {
     expect(store.upsertEntry(entry())).toBe(true)
     const aside = readdirSync(dir).filter(f => f.startsWith('tally.v1.sqlite.corrupt-'))
     expect(aside).toHaveLength(1)
+  })
+
+  it('opens in WAL mode', () => {
+    store = TallyStore.open(path)
+    store.upsertEntry(entry())
+    const raw = new DatabaseSync(path)
+    expect(raw.prepare('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' })
+    raw.close()
+  })
+
+  it('never lets stale WAL sidecars of a broken database reach the fresh one', () => {
+    writeFileSync(path, Buffer.from('not a database'))
+    writeFileSync(path + '-wal', Buffer.from('stale wal'))
+    writeFileSync(path + '-shm', Buffer.from('stale shm'))
+    store = TallyStore.open(path)
+    expect(store.upsertEntry(entry())).toBe(true)
+    // SQLite may delete the sidecars when the broken handle closes; whatever survives is set aside.
+    for (const ext of ['-wal', '-shm']) {
+      if (existsSync(path + ext)) expect(readFileSync(path + ext).toString()).not.toMatch(/^stale/)
+    }
+    const aside = readdirSync(dir).filter(f => f.includes('.corrupt-'))
+    expect(aside.filter(f => f.startsWith('tally.v1.sqlite.corrupt-'))).toHaveLength(1)
+    for (const f of aside) expect(readFileSync(join(dir, f)).toString()).toMatch(/^(not a database|stale)/)
+    store.close()
+    store = TallyStore.open(path)
+    expect(store.entries({ from: 0, to: 10_000 })).toHaveLength(1)
+  })
+
+  it('stores, overwrites and deletes meta values', () => {
+    store = TallyStore.open(path)
+    expect(store.getMeta('k')).toBeUndefined()
+    store.setMeta('k', 'a')
+    store.setMeta('k', 'b')
+    expect(store.getMeta('k')).toBe('b')
+    store.close()
+    store = TallyStore.open(path)
+    expect(store.getMeta('k')).toBe('b')
+    store.deleteMeta('k')
+    expect(store.getMeta('k')).toBeUndefined()
+  })
+
+  it('reset also clears meta values', () => {
+    store = TallyStore.open(path)
+    store.setMeta('k', 'a')
+    store.reset()
+    expect(store.getMeta('k')).toBeUndefined()
+  })
+
+  it('rebuilds when the meta table is missing at the current user_version', () => {
+    store = TallyStore.open(path)
+    store.upsertEntry(entry())
+    store.close()
+    const raw = new DatabaseSync(path)
+    raw.exec('DROP TABLE meta')
+    raw.close()
+    store = TallyStore.open(path)
+    expect(store.entries({ from: 0, to: 10_000 })).toEqual([])
+    store.setMeta('k', 'v')
+    expect(store.getMeta('k')).toBe('v')
   })
 
   describe('transaction', () => {

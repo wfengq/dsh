@@ -134,6 +134,28 @@ describe('Recorder', () => {
     expect(seen[0]?.workspaceId).toBeNull()
   })
 
+  it('reports whether a session was folded to a turn boundary', () => {
+    const store = open()
+    const { rec } = recorder(store)
+    expect(rec.isSettled('root')).toBe(false) // no cursor yet
+    rec.ingest('root', ROOT, log.slice(0, 12)) // ends right after step/start: attempt open
+    expect(rec.isSettled('root')).toBe(false)
+    rec.ingest('root', ROOT, log.slice(0, 13)) // message settled, step not ended yet
+    expect(rec.isSettled('root')).toBe(false)
+    rec.ingest('root', ROOT, log.slice(0, 14)) // step ended, but the turn is still open
+    expect(rec.isSettled('root')).toBe(false)
+    rec.ingest('root', ROOT, log) // through turn/end
+    expect(rec.isSettled('root')).toBe(true)
+  })
+
+  it('records without notifying when asked to', () => {
+    const store = open()
+    const { seen, rec } = recorder(store)
+    expect(rec.ingest('root', ROOT, log, { notify: false })).toBe(3)
+    expect(seen).toHaveLength(0)
+    expect(store.entries({ from: 0, to: Number.MAX_SAFE_INTEGER })).toHaveLength(3)
+  })
+
   it('rolls back entries and cursor when a write fails', () => {
     const store = open()
     const { seen, rec } = recorder(store)

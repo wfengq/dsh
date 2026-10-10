@@ -81,6 +81,10 @@ CREATE TABLE cursors (
   last_seq INTEGER NOT NULL,
   state TEXT NOT NULL
 );
+CREATE TABLE meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `
 
 function sqliteCode(error: unknown): number | undefined {
@@ -98,12 +102,15 @@ function openDatabase(path: string): DatabaseSync {
   const db = new DatabaseSync(path)
   try {
     db.exec('PRAGMA busy_timeout = 5000')
+    // WAL lets queries read while the recorder writes; NORMAL is durable enough for a rebuildable index.
+    db.exec('PRAGMA journal_mode = WAL')
+    db.exec('PRAGMA synchronous = NORMAL')
     const row = db.prepare('PRAGMA user_version').get() as { user_version: number }
     const present = new Set(
       (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
         .map(t => t.name),
     )
-    const complete = present.has('entries') && present.has('cursors')
+    const complete = present.has('entries') && present.has('cursors') && present.has('meta')
     if (row.user_version !== SCHEMA_VERSION || !complete) {
       db.exec('BEGIN IMMEDIATE')
       try {
@@ -163,6 +170,9 @@ export class TallyStore {
   readonly #markDeleted: StatementSync
   readonly #putCursor: StatementSync
   readonly #getCursor: StatementSync
+  readonly #getMeta: StatementSync
+  readonly #putMeta: StatementSync
+  readonly #deleteMeta: StatementSync
 
   private constructor(db: DatabaseSync) {
     this.#db = db
@@ -177,6 +187,11 @@ export class TallyStore {
       INSERT INTO cursors (session_id, last_seq, state) VALUES (?, ?, ?)
       ON CONFLICT (session_id) DO UPDATE SET last_seq = excluded.last_seq, state = excluded.state`)
     this.#getCursor = db.prepare('SELECT last_seq, state FROM cursors WHERE session_id = ?')
+    this.#getMeta = db.prepare('SELECT value FROM meta WHERE key = ?')
+    this.#putMeta = db.prepare(`
+      INSERT INTO meta (key, value) VALUES (?, ?)
+      ON CONFLICT (key) DO UPDATE SET value = excluded.value`)
+    this.#deleteMeta = db.prepare('DELETE FROM meta WHERE key = ?')
   }
 
   /** Inserts the entry unless its id exists; returns whether a row was added. */
@@ -202,6 +217,19 @@ export class TallyStore {
     return row === undefined ? undefined : { lastSeq: row.last_seq, state: row.state }
   }
 
+  getMeta(key: string): string | undefined {
+    const row = this.#getMeta.get(key) as { value: string } | undefined
+    return row?.value
+  }
+
+  setMeta(key: string, value: string): void {
+    this.#putMeta.run(key, value)
+  }
+
+  deleteMeta(key: string): void {
+    this.#deleteMeta.run(key)
+  }
+
   entries(filter: EntryFilter): StoredEntry[] {
     const where = ['at >= ?', 'at < ?']
     const params: Array<string | number> = [filter.from, filter.to]
@@ -219,9 +247,9 @@ export class TallyStore {
     return rows.map(toEntry)
   }
 
-  /** Drops every entry and cursor so the next scan rebuilds from the session logs. */
+  /** Drops every entry, cursor and meta value so the next scan rebuilds from the session logs. */
   reset(): void {
-    this.transaction(() => this.#db.exec('DELETE FROM entries; DELETE FROM cursors'))
+    this.transaction(() => this.#db.exec('DELETE FROM entries; DELETE FROM cursors; DELETE FROM meta'))
   }
 
   /**

@@ -1,5 +1,5 @@
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
-import { foldEvent, initialFoldState, type BilledAttempt, type FoldState } from './attempt-fold.js'
+import { foldEvent, initialFoldState, isFoldIdle, type BilledAttempt, type FoldState } from './attempt-fold.js'
 import { normalizeUsage } from './normalize.js'
 import { resolveRoot } from './root.js'
 import type { StoredEntry, TallyStore } from './store.js'
@@ -8,6 +8,22 @@ import type { StoredEntry, TallyStore } from './store.js'
 export type SessionHeaderLike = Pick<SessionHeader, 'id' | 'origin' | 'parentSession' | 'cwd'>
 
 const ZERO_TOKENS = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } as const
+
+/** What the cursor's `state` column holds for one session. */
+interface CursorState {
+  fold: FoldState
+  /** A `turn/start` was folded without its `turn/end`. */
+  inTurn: boolean
+}
+
+function readState(state: string): CursorState {
+  return JSON.parse(state) as CursorState
+}
+
+export interface IngestOptions {
+  /** Call `onEntry` for the new entries (default `true`). */
+  notify?: boolean
+}
 
 /**
  * Turns session events into ledger entries, resuming per session from the stored cursor.
@@ -40,6 +56,17 @@ export class Recorder {
   }
 
   /**
+   * Whether the session was folded up to a closed turn with no attempt in flight, so its
+   * recorded history is complete as far as the log went. `false` when there is no cursor.
+   */
+  isSettled(sessionId: string): boolean {
+    const cursor = this.#store.getCursor(sessionId)
+    if (cursor === undefined) return false
+    const state = readState(cursor.state)
+    return !state.inTurn && isFoldIdle(state.fold)
+  }
+
+  /**
    * Fold the session's own (non-inherited) events with `seq` above the stored cursor and
    * record every settled attempt.
    *
@@ -48,29 +75,41 @@ export class Recorder {
    * so passing the full own log again is always safe.
    * @returns the number of entries that were newly added.
    */
-  ingest(sessionId: string, header: SessionHeaderLike, ownEvents: readonly SessionEvent[]): number {
+  ingest(
+    sessionId: string,
+    header: SessionHeaderLike,
+    ownEvents: readonly SessionEvent[],
+    options: IngestOptions = {},
+  ): number {
     const added = this.#store.transaction(() => {
       const cursor = this.#store.getCursor(sessionId)
       const startSeq = cursor?.lastSeq ?? -1
       let lastSeq = startSeq
-      let state = cursor === undefined ? initialFoldState() : JSON.parse(cursor.state) as FoldState
+      const saved = cursor === undefined ? undefined : readState(cursor.state)
+      let fold = saved?.fold ?? initialFoldState()
+      let inTurn = saved?.inTurn ?? false
       let rootSessionId: string | undefined
       const inserted: StoredEntry[] = []
       for (const event of ownEvents) {
         if (event.seq <= lastSeq) continue
-        const result = foldEvent(state, event)
-        state = result.state
+        const result = foldEvent(fold, event)
+        fold = result.state
         lastSeq = event.seq
+        if (event.type === 'turn/start') inTurn = true
+        else if (event.type === 'turn/end') inTurn = false
         for (const attempt of result.settled) {
           rootSessionId ??= resolveRoot(header, this.#headers)
           const entry = toEntry(sessionId, rootSessionId, header, attempt)
           if (this.#store.upsertEntry(entry)) inserted.push(entry)
         }
       }
-      if (lastSeq !== startSeq) this.#store.setCursor(sessionId, { lastSeq, state: JSON.stringify(state) })
+      if (lastSeq !== startSeq) {
+        const state: CursorState = { fold, inTurn }
+        this.#store.setCursor(sessionId, { lastSeq, state: JSON.stringify(state) })
+      }
       return inserted
     })
-    for (const entry of added) this.#onEntry(entry)
+    if (options.notify ?? true) for (const entry of added) this.#onEntry(entry)
     return added.length
   }
 }

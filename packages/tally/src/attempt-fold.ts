@@ -66,6 +66,14 @@ export function initialFoldState(): FoldState {
   return wrap({ v: 1, attempt: IDLE, header: null })
 }
 
+/**
+ * Whether the fold sits on a turn or step boundary with no attempt in flight: every attempt
+ * seen so far is settled and closed, so later events can only add new attempts.
+ */
+export function isFoldIdle(state: FoldState): boolean {
+  return unwrap(state).attempt.kind === 'idle'
+}
+
 function wrap(state: State): FoldState {
   return state as unknown as FoldState
 }
