@@ -88,12 +88,18 @@ interface PriceCatalog {
     models: Record<string, PriceVersion[]>     // 按 effectiveFrom 升序排列
     aliases?: Record<string, string>
   }>
+  holidays: Record<string, { years: Record<string, { dates: string[]; source: { url: string; retrievedAt: string; note?: string } }> }>
 }
 interface PriceVersion {
   id: string                                   // 稳定的价格版本 id，账本里存的就是它
   effectiveFrom: string
   effectiveTo?: string
-  windows?: { tz: string; peak: string[] }     // 例如 { tz: 'Asia/Shanghai', peak: ['09:00-12:00', '14:00-18:00'] }
+  windows?: {
+    tz: string                                 // 'Asia/Shanghai'
+    peak: string[]                             // ['09:00-12:00', '14:00-18:00']，左闭右开
+    days: number[]                             // 高峰规则生效的星期，ISO 编号（1 为周一）；DeepSeek 为 [1,2,3,4,5]
+    excludeHolidays?: string                   // 节假日日历 id，例如 'CN'：日历中的日期全天按空闲价
+  }
   rates: { [band in 'flat' | 'peak' | 'offpeak']?: { input: string; cacheRead?: string; cacheWrite?: string; output: string } }
   tiers?: { minInputTokens: number; multiplier: string }[]
   source: { url: string; retrievedAt: string; note?: string }
@@ -105,9 +111,17 @@ interface Quote {
   band: 'peak' | 'offpeak' | 'flat'
   breakdown: { input: string; cacheRead: string; cacheWrite: string; output: string; reasoning: string }  // 各项金额，未计费的项为 '0'
   priceVersion: string                         // PriceVersion.id
+  holidayCalendarMissing?: true                // 请求日期所在年份的节假日日历缺失，报价可能偏高
 }
 ```
 
+- **节假日日历**：存在 `PriceCatalog.holidays` 中，按日历 id 和年份维护，日期格式为 `YYYY-MM-DD`（以价格规则里的 `tz` 为准）。中国日历以国务院办公厅发布的放假通知为准，只收录放假日期。调休上班日如果落在周末，按 DeepSeek 原文“周一至周五”的字面意思处理，即仍属于空闲时段。**某年的日历尚未录入时，那一年工作日的报价会标记为 `holidayCalendarMissing`，界面上提示“节假日日历未覆盖，可能高估”。**
+- **价格历史缺失**：早于第一个已核实价格版本的请求，返回 `null`，界面显示“未定价（价格历史未录入）”，不用当前价格去推算。
+- **DeepSeek 首批数据**（来源：官方“模型 & 价格”页，用户于 2026-10-10 提供截图，核实日期 2026-10-10，单位为人民币/百万 tokens，格式为空闲价/高峰价）：
+  - `deepseek-flash`（V4.1-Flash）：缓存命中输入 0.02/0.04，未命中输入 1/2，输出 4/8；
+  - `deepseek-v4-pro`（V4-Pro-0813）：缓存命中输入 0.15/0.30，未命中输入 4.5/9.0，输出 13.5/27.0；
+  - 别名：`deepseek-v4-flash` 和 `deepseek-v4-flash-vision-exp` 都指向 `deepseek-flash`；
+  - 官方页面没有给出生效日期，所以 `effectiveFrom` 暂记为核实日期，等拿到调价公告后再往前补历史版本。
 - **金额计算一律使用十进制字符串和定点运算，不使用浮点数。** 单价也存成字符串。
 - 用户自定义的厂商价格映射（比如“这个 provider 按 deepseek 官方价计”或手填单价）保存在 `dsh-ledger` 的设置里，**不写进数据包**。用户的覆盖配置优先级最高。
 - **数据维护**：定时 CI 抓取各厂商官方价格页，与数据包比对，发现差异就开 issue；改价必须走 PR 并附上来源，合并后自动发布新版本。
@@ -181,11 +195,12 @@ type ProviderPriceOverride =
   | { provider: string; kind: 'alias'; target: { provider: string; model?: string } }   // 按某个已知厂商或模型的价格计
   | { provider: string; kind: 'manual'; currency: 'CNY' | 'USD'; models: Record<string, PriceVersion['rates']['flat']> }
 interface BalanceService { get(provider: string): Promise<BalanceSnapshot | null>; refresh(provider: string): Promise<BalanceSnapshot | null>; register(provider: string, fetcher: BalanceFetcher): () => void }
-interface BalanceSnapshot { provider: string; balances: Money[]; fetchedAt: number; stale: boolean; error?: string }
+interface BalanceSnapshot { provider: string; wallets: Wallet[]; fetchedAt: number; stale: boolean; error?: string }
+interface Wallet { kind: 'topup' | 'granted' | 'total'; money: Money }   // DeepSeek：赠送余额（granted）优先于充值余额（topup）扣减
 interface BudgetService { list(): Budget[]; set(b: Budget): void; remove(id: string): void }
 interface Budget { id: string; period: 'day' | 'month'; scope: { workspaceId?: string }; limit: Money }
 interface BudgetAlert { budgetId: string; threshold: 0.8 | 1; spent: Money; limit: Money; periodStart: number }
-type BalanceFetcher = (signal: AbortSignal) => Promise<Money[]>
+type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 ```
 
 `workspaceId` 取自会话元数据（`sessionQuery.listSessions()` 返回的工作区或目录）。缺失时为 `undefined`，按工作区分组时归入“未知工作区”。
@@ -274,7 +289,9 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Money[]>
 
 | 事项 | 影响 | 解决方式 |
 |---|---|---|
-| DeepSeek 官方价格页（`api-docs.deepseek.com`）被当前云环境的网络策略拦截 | 阻塞 M1 的价格数值录入 | 在环境设置中放行该域名，或者由用户提供官方价格页的内容或截图 |
+| DeepSeek 当前价格 | 已解决 | 用户于 2026-10-10 提供了官方价格页截图，已录入第 5.1 节 |
+| DeepSeek 历史价格的生效日期 | 早于核实日期的请求显示为“未定价” | 提供带日期的官方调价公告后补录 |
+| 中国法定节假日日历（2026 年起） | 节假日当天的报价准确性 | 依据国务院办公厅放假通知录入并注明来源；缺失的年份按 5.1 节的方式标记 |
 | DeepSeek 余额查询接口的确切路径和返回格式 | M3 | 同上，放行后核实官方 API 文档 |
 | DeepSeek 控制台账单导出的格式 | 对账解析器（M5） | 由用户提供一份导出样例 |
 | 正式包名 | 发布（M5） | 发布前确定，并先确认 npm 上没有被占用 |
