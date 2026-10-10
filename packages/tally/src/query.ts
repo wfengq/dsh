@@ -171,7 +171,8 @@ function newAccumulator(key: string): Accumulator {
   }
 }
 
-function toUsage(t: TallyTokens): TokenCounts {
+/** Ledger token buckets as the pricing `TokenCounts` shape. */
+export function toUsage(t: TallyTokens): TokenCounts {
   return {
     inputTokens: t.input,
     cacheReadTokens: t.cacheRead,

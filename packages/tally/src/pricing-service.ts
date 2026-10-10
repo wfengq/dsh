@@ -1,7 +1,9 @@
+import { Service, type Context } from '@deepseek-ai/cordis'
 import {
   addFixed,
   costOf,
   formatFixed,
+  loadCatalog,
   parseDecimal,
   quote,
   type Fixed,
@@ -10,7 +12,7 @@ import {
   type Rates,
   type TokenCounts,
 } from 'dsh-pricing-data'
-import type { PricingService, ProviderPriceOverride } from 'dsh-tally-api'
+import type { PricingService, ProviderPriceOverride, TallyStatus } from 'dsh-tally-api'
 
 export interface TallyPricingOptions {
   /** Route id (as recorded in the session log) -> pricing vendor in the catalog. */
@@ -176,5 +178,56 @@ export class TallyPricing implements PricingService {
 
   overrides(): ProviderPriceOverride[] {
     return this.#overrides
+  }
+}
+
+export type TallyPricingServiceConfig = TallyPricingOptions
+
+/**
+ * `ctx.tallyPricing`: the bundled catalog with the user's route mapping and overrides.
+ *
+ * An override that cannot be used (for example a malformed manual rate) is skipped with a
+ * warning instead of failing the service; it is listed in {@link configErrors}, which
+ * `ctx.tallyUsage.status()` reports.
+ *
+ * Service methods may run with `this` bound to a cordis context proxy, so this class keeps
+ * no `#private` state.
+ */
+export class TallyPricingService extends Service implements PricingService {
+  /** The pricing engine that `ctx.tallyUsage` aggregates with. */
+  readonly pricing: TallyPricing
+  readonly configErrors: TallyStatus['errors']
+
+  constructor(ctx: Context, config: TallyPricingServiceConfig) {
+    super(ctx, 'tallyPricing')
+    const catalog = loadCatalog()
+    const usable: ProviderPriceOverride[] = []
+    const errors: TallyStatus['errors'] = []
+    for (const override of config.overrides) {
+      try {
+        // Parsing one override on its own surfaces exactly the errors it would raise.
+        new TallyPricing(catalog, { providerRoutes: {}, overrides: [override] })
+        usable.push(override)
+      } catch (error) {
+        const message = `Ignored price override for provider "${override.provider}": ${(error as Error).message}`
+        errors.push({ message })
+        ctx.logger.warn(message)
+      }
+    }
+    this.configErrors = errors
+    this.pricing = new TallyPricing(catalog, { providerRoutes: config.providerRoutes, overrides: usable })
+  }
+
+  quote(q: { provider: string; model: string; usage: TokenCounts; at: number }): Quote | null {
+    return this.pricing.quote(q)
+  }
+
+  catalogVersion(): string {
+    return this.pricing.catalogVersion()
+  }
+
+  /** The overrides in effect (invalid ones excluded). */
+  overrides(): ProviderPriceOverride[] {
+    return this.pricing.overrides()
   }
 }
