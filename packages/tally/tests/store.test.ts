@@ -150,4 +150,63 @@ describe('TallyStore', () => {
     const aside = readdirSync(dir).filter(f => f.startsWith('tally.v1.sqlite.corrupt-'))
     expect(aside).toHaveLength(1)
   })
+
+  describe('transaction', () => {
+    it('commits all writes on success and returns the result', () => {
+      store = TallyStore.open(path)
+      const out = store.transaction(() => {
+        store!.upsertEntry(entry({ id: 's1:1' }))
+        store!.upsertEntry(entry({ id: 's1:2' }))
+        store!.setCursor('s1', { lastSeq: 2, state: 'x' })
+        return 'ok'
+      })
+      expect(out).toBe('ok')
+      expect(store.entries({ from: 0, to: 10_000 })).toHaveLength(2)
+      expect(store.getCursor('s1')).toEqual({ lastSeq: 2, state: 'x' })
+    })
+
+    it('rolls back everything and rethrows when fn throws', () => {
+      store = TallyStore.open(path)
+      expect(() => store!.transaction(() => {
+        store!.upsertEntry(entry({ id: 's1:1' }))
+        store!.upsertEntry(entry({ id: 's1:2' }))
+        throw new Error('boom')
+      })).toThrow('boom')
+      expect(store.entries({ from: 0, to: 10_000 })).toEqual([])
+      // The store stays usable after a rollback.
+      expect(store.upsertEntry(entry())).toBe(true)
+    })
+
+    it('runs nested calls inline inside the outer transaction', () => {
+      store = TallyStore.open(path)
+      store.transaction(() => {
+        store!.upsertEntry(entry({ id: 's1:1' }))
+        store!.transaction(() => store!.upsertEntry(entry({ id: 's1:2' })))
+      })
+      expect(store.entries({ from: 0, to: 10_000 })).toHaveLength(2)
+      expect(() => store!.transaction(() => {
+        store!.upsertEntry(entry({ id: 's1:3' }))
+        store!.transaction(() => { throw new Error('inner') })
+      })).toThrow('inner')
+      expect(store.entries({ from: 0, to: 10_000 })).toHaveLength(2)
+    })
+  })
+
+  it('throws on constraint violations instead of reporting a duplicate', () => {
+    store = TallyStore.open(path)
+    expect(() => store!.upsertEntry(entry({ at: Number.NaN }))).toThrow()
+    expect(store.entries({ from: 0, to: 10_000 })).toEqual([])
+  })
+
+  it('rebuilds missing tables at the current user_version', () => {
+    store = TallyStore.open(path)
+    store.upsertEntry(entry())
+    store.close()
+    const raw = new DatabaseSync(path)
+    raw.exec('DROP TABLE entries')
+    raw.close()
+    store = TallyStore.open(path)
+    expect(store.entries({ from: 0, to: 10_000 })).toEqual([])
+    expect(store.upsertEntry(entry())).toBe(true)
+  })
 })

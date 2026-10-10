@@ -99,7 +99,12 @@ function openDatabase(path: string): DatabaseSync {
   try {
     db.exec('PRAGMA busy_timeout = 5000')
     const row = db.prepare('PRAGMA user_version').get() as { user_version: number }
-    if (row.user_version !== SCHEMA_VERSION) {
+    const present = new Set(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
+        .map(t => t.name),
+    )
+    const complete = present.has('entries') && present.has('cursors')
+    if (row.user_version !== SCHEMA_VERSION || !complete) {
       db.exec('BEGIN IMMEDIATE')
       try {
         const tables = db
@@ -132,18 +137,28 @@ function quarantine(path: string): void {
 export class TallyStore {
   static open(path: string): TallyStore {
     mkdirSync(dirname(path), { recursive: true })
-    let db: DatabaseSync
     try {
-      db = openDatabase(path)
+      return TallyStore.#create(path)
     } catch (error) {
       if (!isNotDatabase(error)) throw error
       quarantine(path)
-      db = openDatabase(path)
+      return TallyStore.#create(path)
     }
-    return new TallyStore(db)
+  }
+
+  /** Opens, validates and prepares statements; the handle is closed on any failure. */
+  static #create(path: string): TallyStore {
+    const db = openDatabase(path)
+    try {
+      return new TallyStore(db)
+    } catch (error) {
+      db.close()
+      throw error
+    }
   }
 
   readonly #db: DatabaseSync
+  #inTransaction = false
   readonly #insert: StatementSync
   readonly #markDeleted: StatementSync
   readonly #putCursor: StatementSync
@@ -152,10 +167,11 @@ export class TallyStore {
   private constructor(db: DatabaseSync) {
     this.#db = db
     this.#insert = db.prepare(`
-      INSERT OR IGNORE INTO entries (
+      INSERT INTO entries (
         id, session_id, root_session_id, workspace_id, at, route, model,
         input, cache_read, cache_write, output, reasoning, usage_known, deleted
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (id) DO NOTHING`)
     this.#markDeleted = db.prepare('UPDATE entries SET deleted = 1 WHERE session_id = ?')
     this.#putCursor = db.prepare(`
       INSERT INTO cursors (session_id, last_seq, state) VALUES (?, ?, ?)
@@ -205,13 +221,30 @@ export class TallyStore {
 
   /** Drops every entry and cursor so the next scan rebuilds from the session logs. */
   reset(): void {
+    this.transaction(() => this.#db.exec('DELETE FROM entries; DELETE FROM cursors'))
+  }
+
+  /**
+   * Runs `fn` atomically: commits on return, rolls back and rethrows on error.
+   * Nested calls run inline inside the outer transaction.
+   */
+  transaction<T>(fn: () => T): T {
+    if (this.#inTransaction) return fn()
     this.#db.exec('BEGIN IMMEDIATE')
+    this.#inTransaction = true
     try {
-      this.#db.exec('DELETE FROM entries; DELETE FROM cursors')
+      const result = fn()
       this.#db.exec('COMMIT')
+      return result
     } catch (error) {
-      this.#db.exec('ROLLBACK')
+      try {
+        this.#db.exec('ROLLBACK')
+      } catch {
+        // The original failure is the useful one.
+      }
       throw error
+    } finally {
+      this.#inTransaction = false
     }
   }
 
