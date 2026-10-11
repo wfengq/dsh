@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
+import * as atomicWrite from '@deepseek-ai/dsh-atomic-write'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import TypertGatewayService from '@deepseek-ai/dsh-api-gateway'
@@ -13,6 +14,11 @@ import type {
 import * as tally from '../src/index.js'
 import { schemas, TALLY_REMOTE } from '../src/remote/contract.js'
 import { header, message, seqd, stepEnd, stepStart, T0, turnEnd, turnStart, U1, U2 } from './fixtures/events.ts'
+
+vi.mock('@deepseek-ai/dsh-atomic-write', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@deepseek-ai/dsh-atomic-write')>()
+  return { ...real, writeFileAtomic: vi.fn(real.writeFileAtomic) }
+})
 
 /** Minimal stand-in for the official `sessionQuery` service: no sessions on disk. */
 class EmptySessionQuery extends Service {
@@ -227,6 +233,20 @@ describe('tally Remote API', () => {
     expect(await call('removeBudget', { id: 'daily' })).toBeUndefined()
     expect(await call('budgets')).toEqual([])
     expect(await codeOf('removeBudget', { id: 'daily' })).toBe('tally/not-found')
+  })
+
+  it('fails setBudget and removeBudget with tally/write-failed when the file write fails', async () => {
+    await start()
+    const budget: Budget = { id: 'daily', period: 'day', scope: {}, limit: { amount: '5', currency: 'CNY' } }
+    await call('setBudget', budget)
+    vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    // Editing an existing id: the old version is still listed, yet the call must fail.
+    vi.mocked(atomicWrite.writeFileAtomic).mockRejectedValueOnce(new Error('disk full'))
+    expect(await codeOf('setBudget', { ...budget, limit: { amount: '9', currency: 'CNY' } })).toBe('tally/write-failed')
+    expect(await call<Budget[]>('budgets')).toEqual([budget])
+    vi.mocked(atomicWrite.writeFileAtomic).mockRejectedValueOnce(new Error('disk full'))
+    expect(await codeOf('removeBudget', { id: 'daily' })).toBe('tally/write-failed')
+    expect(await call<Budget[]>('budgets')).toEqual([budget])
   })
 
   it('carries the invalid-budget reason in the message', async () => {

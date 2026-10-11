@@ -1,12 +1,18 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as atomicWrite from '@deepseek-ai/dsh-atomic-write'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Budget, BudgetAlert, Currency, TallyEntry, UsageGroup, UsageQuery } from 'dsh-tally-api'
 import { BudgetFile } from '../src/budget-file.js'
 import { TallyBudget } from '../src/budget-service.js'
 import * as tally from '../src/index.js'
+
+vi.mock('@deepseek-ai/dsh-atomic-write', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@deepseek-ai/dsh-atomic-write')>()
+  return { ...real, writeFileAtomic: vi.fn(real.writeFileAtomic) }
+})
 
 const DAY = 24 * 3600_000
 const T0 = Date.UTC(2026, 9, 20, 12) // 2026-10-20T12:00Z
@@ -487,6 +493,33 @@ describe('TallyBudget', () => {
     expect(alerts).toHaveLength(2)
   })
 
+  it('announces a crossing in one process only when two processes share the budget file', async () => {
+    const budget = await load()
+    await budget.setAndWait(daily)
+    const other = new Context()
+    const otherAlerts: BudgetAlert[] = []
+    other.on('tally/budget-crossed', (a) => { otherAlerts.push(a) })
+    await other.plugin(FakeUsage)
+    const otherUsage = other.get('tallyUsage') as unknown as FakeUsage
+    const second = other.plugin(TallyBudget, { path, timeZone: TZ })
+    await second
+    const otherBudget = other.get('tallyBudget') as unknown as TallyBudget
+    usage.spent = { CNY: '9' }
+    otherUsage.spent = { CNY: '9' }
+    ctx.emit('tally/recorded', entry())
+    other.emit('tally/recorded', entry())
+    await Promise.all([budget.flush(), otherBudget.flush()])
+    expect(alerts.length + otherAlerts.length).toBe(1)
+    // An older period announces nothing once a newer one is recorded.
+    ctx.emit('tally/recorded', entry({ at: T0 + DAY }))
+    await budget.flush()
+    const count = alerts.length + otherAlerts.length
+    other.emit('tally/recorded', entry())
+    await otherBudget.flush()
+    expect(alerts.length + otherAlerts.length).toBe(count)
+    await second.dispose()
+  })
+
   it('stops evaluating once disposed', async () => {
     const budget = await load()
     budget.set(daily)
@@ -560,8 +593,7 @@ describe('TallyBudget', () => {
       const budget = await load()
       budget.set(daily)
       await budget.flush()
-      rmSync(path)
-      mkdirSync(path) // the atomic rename onto a directory fails
+      vi.mocked(atomicWrite.writeFileAtomic).mockRejectedValueOnce(new Error('disk full'))
       const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
       budget.set({ ...daily, id: 'b2' })
       expect(budget.list().map(b => b.id)).toEqual(['b1', 'b2'])
@@ -569,6 +601,18 @@ describe('TallyBudget', () => {
       expect(budget.list().map(b => b.id)).not.toContain('b2')
       expect(budget.status().errors.join()).toMatch(/budget file write/)
       expect(warn).toHaveBeenCalled()
+    })
+
+    it('rejects setAndWait for an edit of an existing budget whose write fails', async () => {
+      const budget = await load()
+      await budget.setAndWait(daily)
+      vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+      vi.mocked(atomicWrite.writeFileAtomic).mockRejectedValueOnce(new Error('disk full'))
+      await expect(budget.setAndWait({ ...daily, limit: { amount: '99', currency: 'CNY' } })).rejects.toThrow('disk full')
+      expect(budget.list()).toEqual([daily])
+      vi.mocked(atomicWrite.writeFileAtomic).mockRejectedValueOnce(new Error('disk full'))
+      await expect(budget.removeAndWait('b1')).rejects.toThrow('disk full')
+      expect(budget.list()).toEqual([daily])
     })
 
     it('reports no errors by default and the load error of a corrupt file', async () => {

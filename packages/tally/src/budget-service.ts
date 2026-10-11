@@ -104,13 +104,23 @@ export class TallyBudget extends Service implements BudgetService {
    * from `list()` again).
    */
   set(b: Budget): void {
-    const errors = validateBudget(b)
-    if (errors.length > 0) throw new Error('tally: invalid budget: ' + errors.join('; '))
-    this.enqueue({ set: structuredClone(b) }, () => this.state.file.put(b))
+    void this.setAndWait(b).catch(() => {}) // the failure is already logged and in `status()`
   }
 
   remove(id: string): void {
-    this.enqueue({ remove: id }, async () => { await this.state.file.delete(id) })
+    void this.removeAndWait(id).catch(() => {})
+  }
+
+  /** Like `set`, but resolves when this edit is on disk and rejects when its write failed. */
+  setAndWait(b: Budget): Promise<void> {
+    const errors = validateBudget(b)
+    if (errors.length > 0) throw new Error('tally: invalid budget: ' + errors.join('; '))
+    return this.enqueue({ set: structuredClone(b) }, () => this.state.file.put(b))
+  }
+
+  /** Like `remove`, but resolves when this edit is on disk and rejects when its write failed. */
+  removeAndWait(id: string): Promise<void> {
+    return this.enqueue({ remove: id }, async () => { await this.state.file.delete(id) })
   }
 
   /** Resolves once every edit accepted so far is written and every queued evaluation has finished. */
@@ -130,10 +140,12 @@ export class TallyBudget extends Service implements BudgetService {
     return { errors }
   }
 
-  private enqueue(op: BudgetState['queued'][number], write: () => Promise<void>): void {
+  /** Queue a write; the returned promise settles with this write's own outcome. */
+  private enqueue(op: BudgetState['queued'][number], write: () => Promise<void>): Promise<void> {
     const state = this.state
     state.queued.push(op)
-    state.writes = state.writes.then(write).then(
+    const outcome = state.writes.then(write)
+    state.writes = outcome.then(
       () => { state.writeError = undefined },
       (error: unknown) => {
         state.writeError = messageOf(error)
@@ -142,6 +154,7 @@ export class TallyBudget extends Service implements BudgetService {
     ).then(() => {
       state.queued.splice(state.queued.indexOf(op), 1)
     })
+    return outcome
   }
 
   private onRecorded(entry: TallyEntry): void {
@@ -213,7 +226,9 @@ export class TallyBudget extends Service implements BudgetService {
       if (spent.units * t.den < limit.units * t.num) continue
       if (this.state.file.fired(budget.id, start).includes(t.value)) continue
       // Persist first: if emitting fails or the process dies, the alert is never repeated.
-      await this.state.file.markFired(budget.id, start, t.value)
+      // Only the process whose write changed the file announces: another process or a newer period
+      // may have recorded this threshold since we looked.
+      if (!await this.state.file.markFired(budget.id, start, t.value)) continue
       this.announce({
         budgetId: budget.id,
         threshold: t.value,

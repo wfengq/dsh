@@ -1,9 +1,15 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Budget } from 'dsh-tally-api'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import * as atomicWrite from '@deepseek-ai/dsh-atomic-write'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BudgetFile, validateBudget } from '../src/budget-file.js'
+
+vi.mock('@deepseek-ai/dsh-atomic-write', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@deepseek-ai/dsh-atomic-write')>()
+  return { ...real, writeFileAtomic: vi.fn(real.writeFileAtomic) }
+})
 
 let dir: string
 let path: string
@@ -80,6 +86,7 @@ describe('BudgetFile', () => {
 
   it('overwrites the old period when markFired uses a new periodStart', async () => {
     const file = BudgetFile.load(path)
+    await file.put(monthly)
     await file.markFired('b1', 1000, 0.8)
     await file.markFired('b1', 1000, 1)
     await file.markFired('b1', 2000, 0.8)
@@ -88,12 +95,15 @@ describe('BudgetFile', () => {
     expect(BudgetFile.load(path).fired('b1', 2000)).toEqual([0.8])
   })
 
-  it('quarantines corrupt JSON and starts empty', async () => {
+  it('reads a corrupt file as empty without touching it, then quarantines it under the lock on the next write', async () => {
     writeFileSync(path, '{ not json')
     const file = BudgetFile.load(path)
     expect(file.budgets()).toEqual([])
     expect(file.loadError).toBeTruthy()
-    expect(existsSync(path)).toBe(false)
+    expect(readFileSync(path, 'utf8')).toBe('{ not json')
+    expect(readdirSync(dir).some((n) => n.includes('.corrupt-'))).toBe(false)
+    await file.put(monthly)
+    expect(existsSync(path)).toBe(true)
     const corrupt = readdirSync(dir).filter((n) => n.startsWith('budgets.json.corrupt-'))
     expect(corrupt).toHaveLength(1)
     expect(readFileSync(join(dir, corrupt[0]!), 'utf8')).toBe('{ not json')
@@ -101,10 +111,12 @@ describe('BudgetFile', () => {
     expect(BudgetFile.load(path).budgets()).toEqual([monthly])
   })
 
-  it('quarantines structurally invalid content', async () => {
+  it('treats structurally invalid content like a corrupt file', async () => {
     writeFileSync(path, JSON.stringify({ version: 2, budgets: [] }))
     const file = BudgetFile.load(path)
     expect(file.loadError).toBeTruthy()
+    expect(readdirSync(dir).some((n) => n.includes('.corrupt-'))).toBe(false)
+    await file.put(monthly)
     expect(readdirSync(dir).some((n) => n.includes('.corrupt-'))).toBe(true)
   })
 
@@ -133,8 +145,8 @@ describe('BudgetFile across processes', () => {
     const a = BudgetFile.load(path)
     const b = BudgetFile.load(path)
     await a.put(other('x'))
-    await b.markFired('y', 1000, 0.8)
     await b.put(other('y'))
+    await b.markFired('y', 1000, 0.8)
     const reloaded = BudgetFile.load(path)
     expect(reloaded.budgets().map((x) => x.id).sort()).toEqual(['x', 'y'])
     expect(reloaded.fired('y', 1000)).toEqual([0.8])
@@ -143,8 +155,9 @@ describe('BudgetFile across processes', () => {
   it('never rolls an alert record back to an older period', async () => {
     const a = BudgetFile.load(path)
     const b = BudgetFile.load(path)
-    await a.markFired('b1', 2000, 1)
-    await b.markFired('b1', 1000, 0.8)
+    await a.put(monthly)
+    expect(await a.markFired('b1', 2000, 1)).toBe(true)
+    expect(await b.markFired('b1', 1000, 0.8)).toBe(false)
     const reloaded = BudgetFile.load(path)
     expect(reloaded.lastFiredPeriod('b1')).toBe(2000)
     expect(reloaded.fired('b1', 2000)).toEqual([1])
@@ -154,8 +167,11 @@ describe('BudgetFile across processes', () => {
   it('unions thresholds of the same period written by two instances', async () => {
     const a = BudgetFile.load(path)
     const b = BudgetFile.load(path)
-    await a.markFired('b1', 1000, 0.8)
-    await b.markFired('b1', 1000, 1)
+    await a.put(monthly)
+    expect(await a.markFired('b1', 1000, 0.8)).toBe(true)
+    expect(await b.markFired('b1', 1000, 1)).toBe(true)
+    expect(await b.markFired('b1', 1000, 1)).toBe(false)
+    expect(await a.markFired('b1', 1000, 0.8)).toBe(false)
     expect(BudgetFile.load(path).fired('b1', 1000)).toEqual([0.8, 1])
   })
 
@@ -180,13 +196,28 @@ describe('BudgetFile across processes', () => {
     expect(b.budgets()).toEqual([])
   })
 
+  it('keeps the last good state when another process leaves a corrupt file', async () => {
+    const a = BudgetFile.load(path)
+    await a.put(monthly)
+    writeFileSync(path, '{ not json, and longer than before')
+    expect(a.budgets()).toEqual([monthly])
+    expect(a.loadError).toBeTruthy()
+    expect(readFileSync(path, 'utf8')).toBe('{ not json, and longer than before')
+  })
+
+  it('does not record an alert for a budget that is not on disk', async () => {
+    const file = BudgetFile.load(path)
+    expect(await file.markFired('ghost', 1, 1)).toBe(false)
+    expect(existsSync(path)).toBe(false)
+  })
+
   it('leaves memory untouched when the write fails', async () => {
     const file = BudgetFile.load(path)
     await file.put(monthly)
-    rmSync(path)
-    mkdirSync(path) // a directory where the file should be: the rename fails
-    await expect(file.put(other('z'))).rejects.toThrow()
-    await expect(file.markFired('b1', 5, 1)).rejects.toThrow()
+    vi.mocked(atomicWrite.writeFileAtomic).mockRejectedValueOnce(new Error('disk full'))
+    await expect(file.put(other('z'))).rejects.toThrow('disk full')
+    vi.mocked(atomicWrite.writeFileAtomic).mockRejectedValueOnce(new Error('disk full'))
+    await expect(file.markFired('b1', 5, 1)).rejects.toThrow('disk full')
     expect(file.budgets().map((x) => x.id)).not.toContain('z')
     expect(file.fired('b1', 5)).toEqual([])
   })

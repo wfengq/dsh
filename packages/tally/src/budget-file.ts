@@ -106,8 +106,12 @@ function signatureOf(path: string): Signature | undefined {
   }
 }
 
-/** Read the file; a corrupt one is moved aside and reported as `loadError`. */
-function readDisk(path: string): DiskState {
+/**
+ * Read the file; a corrupt one is reported as `loadError` and read as empty. It is moved aside only
+ * with `quarantine`, which callers pass solely while holding the writer lock: without the lock the
+ * rename could take away a file another process has just replaced with a good one.
+ */
+function readDisk(path: string, quarantine: boolean): DiskState {
   let text: string
   let signature: Signature | undefined
   try {
@@ -121,10 +125,10 @@ function readDisk(path: string): DiskState {
   try {
     return { data: parseData(JSON.parse(text)), signature }
   } catch (error) {
-    renameSync(path, `${path}.corrupt-${Date.now()}`)
+    if (quarantine) renameSync(path, `${path}.corrupt-${Date.now()}`)
     return {
       data: emptyData(),
-      signature: undefined,
+      signature: quarantine ? undefined : signature,
       loadError: error instanceof Error ? error.message : String(error),
     }
   }
@@ -139,7 +143,7 @@ function readDisk(path: string): DiskState {
  * is only updated after a write succeeded.
  */
 export class BudgetFile {
-  /** Why the file was quarantined on load, if it was. */
+  /** Why the file was found unusable (it is moved aside by the next write), if it was. */
   loadError: string | undefined
 
   /** Tail of this instance's write queue; it never rejects. */
@@ -152,7 +156,7 @@ export class BudgetFile {
   ) {}
 
   static load(path: string): BudgetFile {
-    const state = readDisk(path)
+    const state = readDisk(path, false)
     const file = new BudgetFile(path, state.data, state.signature)
     file.loadError = state.loadError
     return file
@@ -197,9 +201,14 @@ export class BudgetFile {
     return this.data.fired[budgetId]?.periodStart
   }
 
-  /** Record an alert; a newer period on disk wins, the same period gets the union of thresholds. */
-  async markFired(budgetId: string, periodStart: number, t: Threshold): Promise<void> {
-    await this.update((data) => {
+  /**
+   * Record an alert. Resolves `true` only when this call changed the file, so exactly one caller
+   * (process) gets to announce a given budget, period and threshold; it is `false` when the budget is gone,
+   * the threshold is already recorded or a newer period is. A newer period on disk wins, the same period gets the union of thresholds.
+   */
+  async markFired(budgetId: string, periodStart: number, t: Threshold): Promise<boolean> {
+    return this.update((data) => {
+      if (!data.budgets.some((b) => b.id === budgetId)) return false
       const rec = data.fired[budgetId]
       if (rec === undefined || rec.periodStart < periodStart) {
         data.fired[budgetId] = { periodStart, thresholds: [t] }
@@ -220,10 +229,10 @@ export class BudgetFile {
     }
     if (signature?.mtimeMs === this.signature?.mtimeMs && signature?.size === this.signature?.size) return
     try {
-      const state = readDisk(this.path)
-      this.data = state.data
+      const state = readDisk(this.path, false)
       this.signature = state.signature
       if (state.loadError !== undefined) this.loadError = state.loadError
+      else this.data = state.data // a corrupt file keeps the last good state until a writer replaces it
     } catch {
       // keep the previous state; the next read or write tries again
     }
@@ -243,7 +252,7 @@ export class BudgetFile {
   private async locked(mutate: (data: BudgetFileData) => boolean): Promise<boolean> {
     mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 })
     return withFileLock(this.path, async () => {
-      const state = readDisk(this.path)
+      const state = readDisk(this.path, true)
       if (state.loadError !== undefined) this.loadError = state.loadError
       const next = structuredClone(state.data)
       const changed = mutate(next)

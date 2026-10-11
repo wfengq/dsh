@@ -143,12 +143,19 @@ export class TallyRemote extends TypertRemoteService {
     return this.ctx.tallyBudget.list()
   }
 
-  /** Wait for the queued budget write, so the caller learns about a failed write instead of seeing a silent success. */
-  private async written(id: string, present: boolean): Promise<void> {
-    const budgets = this.ctx.tallyBudget as unknown as { flush?: () => Promise<void> }
-    await budgets.flush?.()
-    if (this.ctx.tallyBudget.list().some(b => b.id === id) !== present) {
-      throw new RemoteError('tally/write-failed', `tally: could not save the budget file: ${this.ctx.tallyBudget.status().errors.join('; ')}`, {})
+  /** Run a budget edit and wait for its own write, so a failed write is reported instead of a silent success. */
+  private async edit(
+    waitFor: 'setAndWait' | 'removeAndWait',
+    arg: Budget | string,
+    fallback: () => void,
+  ): Promise<void> {
+    const budgets = this.ctx.tallyBudget as unknown as Record<string, ((a: Budget | string) => Promise<void>) | undefined>
+    const run = budgets[waitFor]
+    try {
+      if (run === undefined) fallback()
+      else await run.call(this.ctx.tallyBudget, arg)
+    } catch (error) {
+      throw new RemoteError('tally/write-failed', `tally: could not save the budget file: ${error instanceof Error ? error.message : String(error)}`, {})
     }
   }
 
@@ -157,8 +164,7 @@ export class TallyRemote extends TypertRemoteService {
     const budget = decode(schemas.setBudget.request, request) as Budget
     const errors = validateBudget(budget)
     if (errors.length > 0) throw new RemoteError('tally/invalid-budget', 'tally: invalid budget: ' + errors.join('; '), {})
-    this.ctx.tallyBudget.set(budget)
-    await this.written(budget.id, true)
+    await this.edit('setAndWait', budget, () => this.ctx.tallyBudget.set(budget))
   }
 
   @Remote
@@ -167,8 +173,7 @@ export class TallyRemote extends TypertRemoteService {
     if (!this.ctx.tallyBudget.list().some(b => b.id === id)) {
       throw new RemoteError('tally/not-found', `tally: no budget "${id}"`, {})
     }
-    this.ctx.tallyBudget.remove(id)
-    await this.written(id, false)
+    await this.edit('removeAndWait', id, () => this.ctx.tallyBudget.remove(id))
   }
 
   @Remote
