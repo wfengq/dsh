@@ -136,6 +136,11 @@ export class BudgetFile {
     return rec && rec.periodStart === periodStart ? [...rec.thresholds] : []
   }
 
+  /** Start of the period the budget's alerts were last recorded for, if any alert was ever recorded. */
+  lastFiredPeriod(budgetId: string): number | undefined {
+    return this.data.fired[budgetId]?.periodStart
+  }
+
   markFired(budgetId: string, periodStart: number, t: Threshold): void {
     const rec = this.data.fired[budgetId]
     if (rec && rec.periodStart === periodStart) {

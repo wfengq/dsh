@@ -1,5 +1,5 @@
 import { Service, type Context } from '@deepseek-ai/cordis'
-import { addFixed, formatFixed, parseDecimal, type Fixed } from 'dsh-pricing-data'
+import { addFixed, formatFixed, parseAmount, type Fixed } from 'dsh-pricing-data'
 import type { Budget, BudgetAlert, BudgetService, TallyEntry } from 'dsh-tally-api'
 import { BudgetFile, validateBudget } from './budget-file.js'
 import { periodBounds } from './period.js'
@@ -23,6 +23,11 @@ interface BudgetState {
   /** Evaluations of recorded entries run one after another through this chain; it never rejects. */
   chain: Promise<void>
   disposed: boolean
+}
+
+/** Whether two budgets spend over the same period, scope and currency (only the limit amount may differ). */
+function sameSelection(a: Budget, b: Budget): boolean {
+  return a.period === b.period && a.scope.workspaceId === b.scope.workspaceId && a.limit.currency === b.limit.currency
 }
 
 function messageOf(error: unknown): string {
@@ -103,6 +108,10 @@ export class TallyBudget extends Service implements BudgetService {
 
   private async evaluateBudget(budget: Budget, at: number): Promise<void> {
     const { start, end } = periodBounds(budget.period, at, this.timeZone)
+    // The file keeps one alert record per budget; an entry from an earlier period must neither
+    // alert nor overwrite the record of the current one.
+    const recorded = this.state.file.lastFiredPeriod(budget.id)
+    if (recorded !== undefined && start < recorded) return
     const workspaceId = budget.scope.workspaceId
     const groups = await this.ctx.tallyUsage.query({
       from: start,
@@ -114,10 +123,13 @@ export class TallyBudget extends Service implements BudgetService {
     let spent: Fixed = { units: 0n }
     for (const group of groups) {
       for (const money of group.cost) {
-        if (money.currency === budget.limit.currency) spent = addFixed(spent, parseDecimal(money.amount))
+        if (money.currency === budget.limit.currency) spent = addFixed(spent, parseAmount(money.amount))
       }
     }
-    const limit = parseDecimal(budget.limit.amount)
+    // The budget may have been removed or replaced while the query was running.
+    const current = this.state.file.budgets().find(b => b.id === budget.id)
+    if (current === undefined || !sameSelection(current, budget)) return
+    const limit = parseAmount(current.limit.amount)
     for (const t of THRESHOLDS) {
       // spent >= limit * num / den, without division.
       if (spent.units * t.den < limit.units * t.num) continue
@@ -127,8 +139,8 @@ export class TallyBudget extends Service implements BudgetService {
       this.announce({
         budgetId: budget.id,
         threshold: t.value,
-        spent: { amount: formatFixed(spent), currency: budget.limit.currency },
-        limit: { ...budget.limit },
+        spent: { amount: formatFixed(spent), currency: current.limit.currency },
+        limit: { ...current.limit },
         periodStart: start,
       })
     }

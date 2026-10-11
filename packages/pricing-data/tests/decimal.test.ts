@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addFixed, costOf, formatFixed, parseDecimal } from '../src/decimal.js'
+import { addFixed, costOf, formatFixed, parseAmount, parseDecimal } from '../src/decimal.js'
 
 describe('fixed-point decimal', () => {
   it('computes exact costs per million tokens', () => {
@@ -21,5 +21,14 @@ describe('fixed-point decimal', () => {
     expect(() => parseDecimal('-1')).toThrow(RangeError)
     expect(() => parseDecimal('1e3')).toThrow(RangeError)
     expect(() => parseDecimal('0.0000000000001')).toThrow(RangeError) // 13 decimal places
+  })
+
+  it('parses amounts up to 18 decimal places and round-trips with formatFixed', () => {
+    expect(parseAmount('0.000000000000000001').units).toBe(1n)
+    expect(formatFixed(parseAmount('12.123456789012345678'))).toBe('12.123456789012345678')
+    expect(parseAmount('2')).toEqual(parseDecimal('2'))
+    expect(() => parseAmount('0.0000000000000000001')).toThrow(RangeError) // 19 decimal places
+    expect(() => parseAmount('-1')).toThrow(RangeError)
+    expect(() => parseAmount('1e3')).toThrow(RangeError)
   })
 })

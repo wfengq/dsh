@@ -21,6 +21,17 @@ export function parseDecimal(s: string): Fixed {
   return { units: BigInt(whole) * SCALE + BigInt(fraction.padEnd(SCALE_DIGITS, '0')) }
 }
 
+/** Parse a non-negative decimal money amount with up to 18 decimal places (the full fixed-point scale). */
+export function parseAmount(s: string): Fixed {
+  const match = typeof s === 'string' ? DECIMAL_PATTERN.exec(s) : null
+  if (!match) throw new RangeError(`Invalid decimal string: ${JSON.stringify(s)}`)
+  const [, whole, fraction = ''] = match
+  if (fraction.length > SCALE_DIGITS) {
+    throw new RangeError(`Too many decimal places (max ${SCALE_DIGITS}): ${s}`)
+  }
+  return { units: BigInt(whole) * SCALE + BigInt(fraction.padEnd(SCALE_DIGITS, '0')) }
+}
+
 /** Cost of `tokens` at `ratePerMillion` (per 1,000,000 tokens), exact. */
 export function costOf(tokens: number, ratePerMillion: Fixed): Fixed {
   if (!Number.isSafeInteger(tokens) || tokens < 0) {

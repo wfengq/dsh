@@ -136,21 +136,105 @@ describe('TallyBudget', () => {
     expect(alerts[1]!.spent).toEqual({ amount: '12', currency: 'CNY' })
   })
 
-  it('compares exactly, with no floating point', async () => {
+  it('compares exactly, with no floating point, on 18-decimal amounts', async () => {
     const budget = await load()
     budget.set({ ...daily, limit: { amount: '0.3', currency: 'CNY' } })
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
     usage.spent = { CNY: '0.239999999999999999' }
     await record()
+    expect(usage.queries).toHaveLength(1)
     expect(alerts).toEqual([])
     usage.spent = { CNY: '0.24' }
     await record()
     expect(alerts.map(a => a.threshold)).toEqual([0.8])
+    expect(alerts[0]!.spent).toEqual({ amount: '0.24', currency: 'CNY' })
     usage.spent = { CNY: '0.299999999999999999' }
     await record()
     expect(alerts).toHaveLength(1)
     usage.spent = { CNY: '0.3' }
     await record()
     expect(alerts.map(a => a.threshold)).toEqual([0.8, 1])
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('reports the spent amount with full 18-decimal precision', async () => {
+    const budget = await load()
+    budget.set(daily)
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    usage.spent = { CNY: '8.123456789012345678' }
+    await record()
+    expect(alerts[0]!.spent).toEqual({ amount: '8.123456789012345678', currency: 'CNY' })
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('skips a budget removed while its query was running', async () => {
+    const budget = await load()
+    budget.set(daily)
+    let release!: () => void
+    usage.gate = new Promise<void>(resolve => { release = resolve })
+    usage.spent = { CNY: '12' }
+    ctx.emit('tally/recorded', entry())
+    await idle()
+    budget.remove('b1')
+    release()
+    await idle()
+    expect(alerts).toEqual([])
+    expect(BudgetFile.load(path).fired('b1', Date.UTC(2026, 9, 20))).toEqual([])
+  })
+
+  it('uses the limit current after the query when a budget was replaced meanwhile', async () => {
+    const budget = await load()
+    budget.set(daily)
+    let release!: () => void
+    usage.gate = new Promise<void>(resolve => { release = resolve })
+    usage.spent = { CNY: '8' }
+    ctx.emit('tally/recorded', entry())
+    await idle()
+    budget.set({ ...daily, limit: { amount: '100', currency: 'CNY' } })
+    release()
+    await idle()
+    expect(alerts).toEqual([])
+    // Replaced with a lower limit while a query is running: alerts carry the new limit.
+    usage.gate = new Promise<void>(resolve => { release = resolve })
+    ctx.emit('tally/recorded', entry())
+    await idle()
+    budget.set({ ...daily, limit: { amount: '9', currency: 'CNY' } })
+    release()
+    await idle()
+    expect(alerts.map(a => [a.threshold, a.limit.amount])).toEqual([[0.8, '9']])
+  })
+
+  it('skips a budget whose period or scope changed while its query was running', async () => {
+    const budget = await load()
+    budget.set(daily)
+    let release!: () => void
+    usage.gate = new Promise<void>(resolve => { release = resolve })
+    usage.spent = { CNY: '12' }
+    ctx.emit('tally/recorded', entry())
+    await idle()
+    budget.set({ ...daily, period: 'month' })
+    release()
+    await idle()
+    expect(alerts).toEqual([])
+  })
+
+  it('ignores an entry from an earlier period than the one already alerted', async () => {
+    const budget = await load()
+    budget.set(daily)
+    usage.spent = { CNY: '8' }
+    await record(entry({ at: T0 + DAY }))
+    expect(alerts.map(a => a.periodStart)).toEqual([Date.UTC(2026, 9, 21)])
+    usage.queries.length = 0
+    usage.spent = { CNY: '12' }
+    await record(entry({ at: T0 })) // earlier period P1
+    expect(alerts).toHaveLength(1)
+    expect(usage.queries).toEqual([])
+    expect(BudgetFile.load(path).fired('b1', Date.UTC(2026, 9, 21))).toEqual([0.8])
+    await record(entry({ at: T0 + DAY }))
+    expect(alerts.map(a => [a.periodStart, a.threshold])).toEqual([
+      [Date.UTC(2026, 9, 21), 0.8],
+      [Date.UTC(2026, 9, 21), 1],
+    ])
   })
 
   it('does not repeat an alert after the service is rebuilt from the file', async () => {
