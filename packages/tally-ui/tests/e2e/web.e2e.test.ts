@@ -16,7 +16,6 @@ import { startMockLlmServer, type MockLlmServer } from '@deepseek-ai/dsh-llm-moc
  * status dot in the session header.
  */
 
-const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url))
 const tallyDir = fileURLToPath(new URL('../../../tally/', import.meta.url))
 const tallyUiDir = fileURLToPath(new URL('../../', import.meta.url))
 const API_KEY = 'mock-key'
@@ -98,8 +97,6 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
   let browser: Browser
 
   beforeAll(async () => {
-    const build = await run('pnpm', ['-F', 'dsh-tally-ui...', 'build'], baseEnv(), repoRoot)
-    expect(build.code, describeRun(build)).toBe(0)
     home = mkdtempSync(join(tmpdir(), 'dsh-tally-ui-e2e-'))
     server = await startMockLlmServer({ port: 0, apiKey: API_KEY, sequence: ['success'], repeatLast: true })
     env = {

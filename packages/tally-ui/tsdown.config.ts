@@ -64,6 +64,8 @@ const config: UserConfig = {
     // Inlining every other dependency is the point; no allow-list hint needed.
     onlyBundle: false,
   },
+  // dsh's client module loader requires this CJS factory format; the ESM advice does not apply.
+  checks: { legacyCjs: false },
   define: {
     'process.env.NODE_ENV': JSON.stringify('production'),
   },

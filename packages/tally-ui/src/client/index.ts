@@ -20,8 +20,8 @@ export const inject = ['remote', 'slots', 'locale']
 const UTILITIES = 'conversation.session.header.utilities'
 
 export async function apply(ctx: Context): Promise<void> {
-  const dispose = await ctx.remote.$mount(TALLY_REMOTE)
-  ctx.effect(() => dispose, 'dsh-tally-ui: tally Remote namespace')
+  // `$mount` owns its effect on this fiber: unloading the plugin withdraws the namespace.
+  await ctx.remote.$mount(TALLY_REMOTE)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-tally-ui: dictionaries')
   ctx.inject(['remote.tally'], (scope) => {
     const injected: StatusDotInjected = { status: () => scope.remote.tally.status() }

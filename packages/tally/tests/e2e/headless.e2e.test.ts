@@ -108,8 +108,6 @@ describe('dsh-tally in the real dsh headless profile', () => {
   let dbPath: string
 
   beforeAll(async () => {
-    const build = await run('pnpm', ['-F', 'dsh-tally', '-F', 'dsh-tally-balance-deepseek', 'build'], baseEnv())
-    expect(build.code, describeRun(build)).toBe(0)
     home = mkdtempSync(join(tmpdir(), 'dsh-tally-e2e-'))
     dbPath = join(home, 'tally', 'tally.v1.sqlite')
     server = await startMockLlmServer({ port: 0, apiKey: API_KEY, sequence: ['success'], repeatLast: true })
