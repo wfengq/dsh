@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -22,6 +23,10 @@ import { TallyStore, type StoredEntry } from '../../src/store.js'
 
 const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url))
 const overlayPath = fileURLToPath(new URL('./overlay.yml', import.meta.url))
+const balanceOverlayTemplate = fileURLToPath(new URL('./overlay-balance.yml', import.meta.url))
+const tallyEntry = fileURLToPath(new URL('../../lib/index.js', import.meta.url))
+const balanceEntry = fileURLToPath(new URL('../../../balance-deepseek/lib/index.js', import.meta.url))
+const probeEntry = fileURLToPath(new URL('./fixtures/balance-probe.mjs', import.meta.url))
 const API_KEY = 'mock-key'
 const RUN_TIMEOUT = 120_000
 
@@ -103,7 +108,7 @@ describe('dsh-tally in the real dsh headless profile', () => {
   let dbPath: string
 
   beforeAll(async () => {
-    const build = await run('pnpm', ['-F', 'dsh-tally', 'build'], baseEnv())
+    const build = await run('pnpm', ['-F', 'dsh-tally', '-F', 'dsh-tally-balance-deepseek', 'build'], baseEnv())
     expect(build.code, describeRun(build)).toBe(0)
     home = mkdtempSync(join(tmpdir(), 'dsh-tally-e2e-'))
     dbPath = join(home, 'tally', 'tally.v1.sqlite')
@@ -177,5 +182,75 @@ describe('dsh-tally in the real dsh headless profile', () => {
     const ids = new Set(readEntries().map(e => e.id))
     for (const id of firstIds) expect(ids.has(id), `backfilled ${id}`).toBe(true)
     expect(ids.size).toBeGreaterThanOrEqual(firstIds.size + 1)
+  })
+
+  describe('balance through dsh-tally-balance-deepseek', () => {
+    let stub: Server
+    let stubURL: string
+    const authorizations: Array<string | undefined> = []
+
+    beforeAll(async () => {
+      stub = createServer((req, res) => {
+        authorizations.push(req.headers.authorization)
+        if (req.url === '/user/balance') {
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({
+            is_available: true,
+            balance_infos: [{
+              currency: 'CNY',
+              total_balance: '110.00',
+              granted_balance: '10.00',
+              topped_up_balance: '100.00',
+            }],
+          }))
+        } else {
+          res.writeHead(404).end()
+        }
+      })
+      await new Promise<void>(resolve => stub.listen(0, '127.0.0.1', resolve))
+      const address = stub.address()
+      if (address === null || typeof address === 'string') throw new Error('stub server has no port')
+      stubURL = `http://127.0.0.1:${address.port}`
+    })
+
+    afterAll(async () => {
+      stub?.closeAllConnections()
+      await new Promise<void>(resolve => stub ? stub.close(() => resolve()) : resolve())
+    })
+
+    it('reads the API-key balance of a headless run through ctx.tallyBalance', async () => {
+      // The generated copy lives in DSH_HOME, so the plugin entries are named by absolute path.
+      const overlay = join(home, 'overlay-balance.yml')
+      const text = readFileSync(balanceOverlayTemplate, 'utf8')
+        .replaceAll('__TALLY_ENTRY__', tallyEntry)
+        .replaceAll('__BALANCE_ENTRY__', balanceEntry)
+        .replaceAll('__PROBE_ENTRY__', probeEntry)
+        .replaceAll('__BASE_URL__', stubURL)
+      writeFileSync(overlay, text)
+      const probeFile = join(home, 'probe-balance.json')
+      rmSync(probeFile, { force: true })
+
+      const result = await run(process.execPath, [dshBin, '--profile', 'headless', '--patch', overlay, 'say hi'], env)
+      expect(result.code, describeRun(result)).toBe(0)
+      expect(result.stderr, describeRun(result)).not.toContain('ExperimentalWarning')
+      expect(result.stderr, describeRun(result)).not.toContain('failed to import')
+
+      expect(existsSync(probeFile), describeRun(result)).toBe(true)
+      const snapshot = JSON.parse(readFileSync(probeFile, 'utf8')) as {
+        provider: string
+        stale: boolean
+        error?: string
+        wallets: Array<{ kind: string; money: { amount: string; currency: string } }>
+      }
+      expect(snapshot.provider).toBe('deepseek-official')
+      expect(snapshot.stale, describeRun(result)).toBe(false)
+      expect(snapshot.error).toBeUndefined()
+      const amounts = Object.fromEntries(snapshot.wallets.map(w => [w.kind, w.money.amount]))
+      expect(amounts).toEqual({ topup: '100', granted: '10', total: '110' })
+      expect(snapshot.wallets.every(w => w.money.currency === 'CNY')).toBe(true)
+
+      expect(authorizations.length).toBeGreaterThanOrEqual(1)
+      expect(authorizations.every(a => a === 'Bearer ' + API_KEY), JSON.stringify(authorizations)).toBe(true)
+    })
   })
 })

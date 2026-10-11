@@ -1,0 +1,13 @@
+# Template for the balance e2e case: mounts dsh-tally, dsh-tally-balance-deepseek and the probe
+# plugin. The test copies it into the throwaway DSH_HOME, replacing the `__PLACEHOLDER__` tokens
+# with absolute paths of the built entries and the stub server's address (relative plugin names
+# resolve beside the overlay file, which is no longer this directory after the copy).
+- insert:
+    - id: tally
+      name: __TALLY_ENTRY__
+    - id: tally-balance-deepseek
+      name: __BALANCE_ENTRY__
+      config:
+        baseURL: __BASE_URL__
+    - id: tally-balance-probe
+      name: __PROBE_ENTRY__

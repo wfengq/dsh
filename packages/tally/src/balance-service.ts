@@ -90,7 +90,7 @@ export class TallyBalance extends Service implements BalanceService {
   refresh(route: string): Promise<BalanceSnapshot | null> {
     const entry = this.state.routes.get(route)
     if (entry === undefined) return Promise.resolve(null)
-    return entry.inflight?.promise ?? this.fetch(route, entry)
+    return entry.inflight?.promise ?? this.runFetcher(route, entry)
   }
 
   /** Stop everything a route owns: its timer and its in-flight request. */
@@ -131,7 +131,7 @@ export class TallyBalance extends Service implements BalanceService {
     }, delay)
   }
 
-  private fetch(route: string, entry: Route): Promise<BalanceSnapshot> {
+  private runFetcher(route: string, entry: Route): Promise<BalanceSnapshot> {
     const { timeoutMs } = this.config
     const controller = new AbortController()
     const signal = controller.signal

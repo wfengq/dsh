@@ -17,7 +17,7 @@ export interface ApiKeyFetcherOptions {
  * `res.json()` are replaced rather than forwarded, because their text is not under our control.
  */
 export function apiKeyFetcher(opts: ApiKeyFetcherOptions): BalanceFetcher {
-  const doFetch = opts.fetch ?? fetch
+  const fetch = opts.fetch ?? globalThis.fetch
   return async (signal) => {
     const key = await opts.resolveKey()
     if (!key) throw new Error('DEEPSEEK_API_KEY not configured')
@@ -31,7 +31,7 @@ export function apiKeyFetcher(opts: ApiKeyFetcherOptions): BalanceFetcher {
 
     let res: Response
     try {
-      res = await doFetch(url, {
+      res = await fetch(url, {
         headers: { Authorization: 'Bearer ' + key, Accept: 'application/json' },
         signal,
       })
