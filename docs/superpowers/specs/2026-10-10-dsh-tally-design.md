@@ -226,12 +226,19 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 - **刷新策略**：用户主动刷新时立即查询；每轮对话结束后去抖刷新；两次查询至少间隔 60 秒；进程内缓存结果。
 - **查询失败绝不显示 0**：返回上一次成功的快照，标记 `stale: true` 并带上 `error`。
 - 其他厂商的余额由社区通过 `register` 补充。
+- **余额按路由 id 区分**：`get(provider)` 和 `register(provider, …)` 里的 `provider` 是路由 id（例如 `deepseek-official`、`deepseek-account`），与 `quote()` 的约定一致。API key 和账号登录可能对应两个不同的账户，所以分开查询，不合并。
+- **API key 方式的接口**：`GET {baseURL}/user/balance`，请求头 `Authorization: Bearer <key>`，返回 `{ is_available, balance_infos: [{ currency, total_balance, granted_balance, topped_up_balance }] }`（与社区余额插件的实际调用一致）。`baseURL` 默认为 `https://api.deepseek.com`，key 通过 `ctx.credentials.resolve('DEEPSEEK_API_KEY')` 读取，引用名与官方适配器的 `apiKeyEnv` 相同，两者都可以配置。
+- **账号方式**：调用 `ctx.deepseekAccount.getBalance(client)`，结果中 `normal_wallets` 映射为 `topup`，`bonus_wallets` 映射为 `granted`，`total` 按币种求和。金额字符串可能带指数写法（如 `0E-16`），需要先规范化成十进制字符串。
+- **刷新触发**：某个路由有新的实时记账后，等 3 秒再刷新该路由的余额（去抖），同一路由两次刷新至少间隔 60 秒；用户手动刷新时立即查询，但同一时刻对同一路由只发出一个请求。
 
 ### 5.5 预算 `ctx.tallyBudget`
 
 - 预算有两个维度：周期（按日或按月）和范围（全局或某个工作区），金额是某一币种下的阈值。
 - 达到 80% 和 100% 时各触发一次 `tally/budget-crossed`，界面弹出提示。
 - 只提醒，不拦截。需要拦截的话，可以由其他插件监听这个事件来实现。
+- **预算单独存储**：预算存放在 `$DSH_HOME/tally/budgets.json`（原子写入），不放进账本数据库，因为账本可以随时删除重建。每个预算周期内，80% 和 100% 两个阈值各只提醒一次；已提醒的状态也记在这个文件里。
+- **周期与时区**：按日或按月的周期边界使用插件配置的 `timeZone`，默认取宿主时区。只累计与预算同币种的费用，其他币种的费用不计入。
+- **触发时机**：每当有新的实时账目时检查一次；回填和重建不触发提醒。
 
 ### 5.6 参考界面 `dsh-tally-ui`
 
