@@ -1,4 +1,4 @@
-import { Service, type Context } from '@deepseek-ai/cordis'
+import { Service, type Context, type Volatile } from '@deepseek-ai/cordis'
 import {
   addFixed,
   bandAt,
@@ -162,7 +162,7 @@ export class TallyPricing implements PricingService {
     return bandAt(this.#catalog, { ...this.#target(route, model), at })
   }
 
-  /** The bundled catalog with, for each model, the price version in effect at `at`. */
+  /** The bundled catalog with, for each model, the price version in effect at `at`, and the overrides in effect. */
   catalogView(at: number): CatalogView {
     const providers: CatalogView['providers'] = []
     for (const [id, provider] of Object.entries(this.#catalog.providers)) {
@@ -179,7 +179,7 @@ export class TallyPricing implements PricingService {
       }
       providers.push({ id, currency: provider.currency, models })
     }
-    return { version: this.#catalog.generatedAt, providers }
+    return { version: this.#catalog.generatedAt, overrides: structuredClone(this.#overrides), providers }
   }
 
   /**
@@ -233,7 +233,36 @@ export class TallyPricing implements PricingService {
   }
 }
 
-export type TallyPricingServiceConfig = TallyPricingOptions
+/** Price overrides as the service reads them: a fixed list, or the plugin's volatile config field. */
+export type OverridesSource = readonly ProviderPriceOverride[] | Volatile<readonly ProviderPriceOverride[] | undefined>
+
+export interface TallyPricingServiceConfig {
+  providerRoutes: Record<string, string>
+  overrides: OverridesSource
+  /**
+   * Subscribes to changes of `overrides`; returns the unsubscribe function. The plugin's `apply`
+   * forwards `loader/volatile-update` here, because the Loader dispatches that event to the
+   * entry's own fiber only, not to this service's.
+   */
+  watch?: (listener: () => void) => () => void
+}
+
+/** Mutable state, kept in one plain object because service methods may run on a cordis proxy. */
+interface PricingState {
+  pricing: TallyPricing
+  errors: TallyStatus['errors']
+  observers: Set<() => void>
+}
+
+function isVolatileSource(source: OverridesSource): source is Volatile<readonly ProviderPriceOverride[] | undefined> {
+  return !Array.isArray(source) && typeof (source as { get?: unknown }).get === 'function'
+}
+
+/** The current overrides as fresh mutable copies (volatile snapshots are frozen). */
+function readOverrides(source: OverridesSource): ProviderPriceOverride[] {
+  const list = isVolatileSource(source) ? source.get() ?? [] : source
+  return list.map(o => structuredClone(o) as ProviderPriceOverride)
+}
 
 /**
  * `ctx.tallyPricing`: the bundled catalog with the user's route mapping and overrides.
@@ -242,32 +271,79 @@ export type TallyPricingServiceConfig = TallyPricingOptions
  * or model is not in the catalog) is skipped with a warning instead of failing the service; it
  * is listed in {@link configErrors}, which `ctx.tallyUsage.status()` reports.
  *
+ * The overrides are a volatile config field: when the settings page edits them, {@link reload}
+ * rebuilds the pricing in place, without remounting the plugin. Amounts are always computed at
+ * query time, so nothing stored has to be rebuilt.
+ *
  * Service methods may run with `this` bound to a cordis context proxy, so this class keeps
  * no `#private` state.
  */
 export class TallyPricingService extends Service implements PricingService {
-  /** The pricing engine that `ctx.tallyUsage` aggregates with. */
-  readonly pricing: TallyPricing
-  readonly configErrors: TallyStatus['errors']
+  private readonly options: TallyPricingServiceConfig
+  private readonly catalog: PriceCatalog
+  private readonly state: PricingState
 
   constructor(ctx: Context, config: TallyPricingServiceConfig) {
     super(ctx, 'tallyPricing')
-    const catalog = loadCatalog()
+    this.options = config
+    this.catalog = loadCatalog()
+    this.state = { ...this.build(), observers: new Set() }
+    const watch = config.watch
+    if (watch) ctx.effect(() => watch(() => this.reload()), 'tallyPricing overrides')
+    const observers = this.state.observers
+    ctx.effect(() => () => { observers.clear() }, 'tallyPricing observers')
+  }
+
+  /** The pricing engine that `ctx.tallyUsage` aggregates with; replaced when the overrides change. */
+  get pricing(): TallyPricing {
+    return this.state.pricing
+  }
+
+  /** Overrides that were skipped because they could not be used. */
+  get configErrors(): TallyStatus['errors'] {
+    return this.state.errors
+  }
+
+  /**
+   * Rebuild the pricing from the current overrides and notify change observers. Rate caches
+   * live only for one aggregation, so the next query prices with the new rules.
+   */
+  reload(): void {
+    Object.assign(this.state, this.build())
+    for (const observer of [...this.state.observers]) {
+      try {
+        observer()
+      } catch (error) {
+        this.ctx.logger.warn(`pricing change observer failed: ${(error as Error).message}`)
+      }
+    }
+  }
+
+  /**
+   * Calls `observer` after every rebuild of the pricing; returns the unsubscribe function.
+   * Internal (used by the Remote `watch` stream): not part of `PricingService`.
+   */
+  watchChanges(observer: () => void): () => void {
+    const observers = this.state.observers
+    observers.add(observer)
+    return () => { observers.delete(observer) }
+  }
+
+  private build(): Pick<PricingState, 'pricing' | 'errors'> {
     const usable: ProviderPriceOverride[] = []
     const errors: TallyStatus['errors'] = []
-    for (const override of config.overrides) {
+    for (const override of readOverrides(this.options.overrides)) {
       try {
         // Parsing one override on its own surfaces exactly the errors it would raise.
-        new TallyPricing(catalog, { providerRoutes: {}, overrides: [override] })
+        new TallyPricing(this.catalog, { providerRoutes: {}, overrides: [override] })
         usable.push(override)
       } catch (error) {
         const message = `Ignored price override for provider "${override.provider}": ${(error as Error).message}`
         errors.push({ message })
-        ctx.logger.warn(message)
+        this.ctx.logger.warn(message)
       }
     }
-    this.configErrors = errors
-    this.pricing = new TallyPricing(catalog, { providerRoutes: config.providerRoutes, overrides: usable })
+    return { pricing: new TallyPricing(this.catalog, { providerRoutes: this.options.providerRoutes, overrides: usable }), errors }
   }
 
   quote(q: { provider: string; model: string; usage: TokenCounts; at: number }): Quote | null {

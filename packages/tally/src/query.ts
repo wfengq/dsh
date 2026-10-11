@@ -154,6 +154,8 @@ interface Accumulator {
   requestCount: number
   unpricedCount: number
   unknownUsageCount: number
+  /** Entries of sessions marked deleted. */
+  deletedCount: number
 }
 
 function newAccumulator(key: string): Accumulator {
@@ -168,6 +170,7 @@ function newAccumulator(key: string): Accumulator {
     requestCount: 0,
     unpricedCount: 0,
     unknownUsageCount: 0,
+    deletedCount: 0,
   }
 }
 
@@ -185,6 +188,7 @@ export function toUsage(t: TallyTokens): TokenCounts {
 function add(acc: Accumulator, e: UsageRow, rates: RateCache): void {
   const t = e.tokens
   acc.requestCount++
+  if (e.deleted === true) acc.deletedCount++
   acc.input += t.input
   acc.cacheRead += t.cacheRead
   acc.cacheWrite += t.cacheWrite
@@ -202,13 +206,14 @@ function add(acc: Accumulator, e: UsageRow, rates: RateCache): void {
   acc.cost.set(priced.currency, (acc.cost.get(priced.currency) ?? 0n) + priced.units)
 }
 
-function finish(acc: Accumulator): UsageGroup {
+/** `withDeleted`: report `deletedCount` (only session groups do). */
+function finish(acc: Accumulator, withDeleted = false): UsageGroup {
   const tokens: TallyTokens = { input: acc.input, cacheRead: acc.cacheRead, cacheWrite: acc.cacheWrite, output: acc.output }
   if (acc.reasoning !== undefined) tokens.reasoning = acc.reasoning
   const cost: Money[] = [...acc.cost]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([currency, units]) => ({ amount: formatUnits(units), currency }))
-  return {
+  const group: UsageGroup = {
     key: acc.key,
     tokens,
     cost,
@@ -216,6 +221,8 @@ function finish(acc: Accumulator): UsageGroup {
     unpricedCount: acc.unpricedCount,
     unknownUsageCount: acc.unknownUsageCount,
   }
+  if (withDeleted) group.deletedCount = acc.deletedCount
+  return group
 }
 
 function compareKeys(a: string, b: string): number {
@@ -278,7 +285,8 @@ export function aggregate(
     if (acc === undefined) groups.set(key, acc = newAccumulator(key))
     add(acc, e, rates)
   }
-  return [...groups.values()].sort((a, b) => compareKeys(a.key, b.key)).map(finish)
+  const withDeleted = groupBy === 'session'
+  return [...groups.values()].sort((a, b) => compareKeys(a.key, b.key)).map(acc => finish(acc, withDeleted))
 }
 
 /** One group (keyed `key`) over all `entries`, priced like {@link aggregate}. */

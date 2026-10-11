@@ -11,7 +11,7 @@
 import { z } from 'zod'
 import type { RemoteResult, RemoteStreamHandle, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  BalanceSnapshot, BandView, Budget, BudgetAlert, CatalogView, PeakSavings, SessionView, TallyEntry, TallyStatusView,
+  BalanceSnapshot, BandView, Budget, BudgetAlert, CatalogView, PeakSavings, ProviderPriceOverride, SessionView, TallyEntry, TallyStatusView,
   TallyWatchFrame, TurnUsage, UsageGroup, UsageQuery,
 } from 'dsh-tally-api'
 
@@ -64,6 +64,7 @@ const usageGroup = z.object({
   requestCount: z.number(),
   unpricedCount: z.number(),
   unknownUsageCount: z.number(),
+  deletedCount: z.number().optional(),
 }) satisfies z.ZodType<UsageGroup>
 
 const tallyEntry = z.object({
@@ -154,8 +155,30 @@ const budget = z.object({
   limit: z.object({ amount: text, currency }),
 }) satisfies z.ZodType<Budget>
 
+const rates = z.object({
+  input: z.string(),
+  cacheRead: z.string().optional(),
+  cacheWrite: z.string().optional(),
+  output: z.string(),
+})
+
+const priceOverride = z.discriminatedUnion('kind', [
+  z.object({
+    provider: z.string(),
+    kind: z.literal('alias'),
+    target: z.object({ provider: z.string(), model: z.string().optional() }),
+  }),
+  z.object({
+    provider: z.string(),
+    kind: z.literal('manual'),
+    currency,
+    models: z.record(z.string(), rates),
+  }),
+]) satisfies z.ZodType<ProviderPriceOverride>
+
 const catalogView = z.object({
   version: z.string(),
+  overrides: z.array(priceOverride).optional(),
   providers: z.array(z.object({
     id: z.string(),
     currency,

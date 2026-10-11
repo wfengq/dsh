@@ -8,6 +8,7 @@ import TypertGatewayService from '@deepseek-ai/dsh-api-gateway'
 import type { BalanceSnapshot, BudgetAlert, TallyEntry } from 'dsh-tally-api'
 import * as tally from '../src/index.js'
 import { schemas, TALLY_REMOTE } from '../src/remote/contract.js'
+import type { TallyPricingService } from '../src/pricing-service.js'
 import type { TallyRemote } from '../src/remote/service.js'
 import { header, message, seqd, stepEnd, stepStart, turnEnd, turnStart, U1 } from './fixtures/events.ts'
 
@@ -97,6 +98,17 @@ describe('tally/watch', () => {
     for (let i = 0; i < 1001; i++) ctx.emit('tally/recorded', entry(i))
     expect((await it.next()).value.type).toBe('hello')
     // The oldest frame (e0) was dropped; the queue resumes at e1.
+    expect((await it.next()).value).toEqual({ type: 'recorded', entry: entry(1) })
+    ac.abort()
+  })
+
+  it('sends a fresh hello when the price overrides change, so the client re-reads every amount', async () => {
+    const ac = new AbortController()
+    const it = remote.watch(ac.signal)[Symbol.asyncIterator]()
+    expect((await it.next()).value.type).toBe('hello')
+    ;(ctx.get('tallyPricing') as unknown as TallyPricingService).reload()
+    ctx.emit('tally/recorded', entry(1))
+    expect((await it.next()).value.type).toBe('hello')
     expect((await it.next()).value).toEqual({ type: 'recorded', entry: entry(1) })
     ac.abort()
   })

@@ -9,7 +9,7 @@ import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import TypertGatewayService from '@deepseek-ai/dsh-api-gateway'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type {
-  BalanceSnapshot, BandView, Budget, CatalogView, PeakSavings, SessionView, TurnUsage, UsageGroup,
+  BalanceSnapshot, BandView, Budget, CatalogView, PeakSavings, SessionView, TallyStatusView, TurnUsage, UsageGroup,
 } from 'dsh-tally-api'
 import * as tally from '../src/index.js'
 import { schemas, TALLY_REMOTE } from '../src/remote/contract.js'
@@ -55,7 +55,7 @@ function budgetFile(): string {
   return readFileSync(join(dir, 'budgets.json'), 'utf8')
 }
 
-async function start(config: Partial<tally.Config> = {}): Promise<void> {
+async function start(config: tally.ConfigInput = {}): Promise<void> {
   ctx = new Context()
   await ctx.plugin(TypertRegistry)
   await ctx.plugin(TypertGatewayService, {})
@@ -275,6 +275,16 @@ describe('tally Remote API', () => {
     // Before the first verified version nothing is in effect.
     vi.setSystemTime(new Date('2026-10-01T00:00:00Z'))
     expect((await call<CatalogView>('catalog')).providers[0]!.models).toEqual([])
+  })
+
+  it('lists the price overrides in effect with the catalog and reports ignored ones in status', async () => {
+    const gateway = { provider: 'gw', kind: 'alias', target: { provider: 'deepseek' } } as const
+    await start({ overrides: [gateway, { provider: 'bad', kind: 'alias', target: { provider: 'no-such-vendor' } }] })
+    const view = await call<CatalogView>('catalog')
+    expect(view.overrides).toEqual([gateway])
+    expect(() => schemas.catalog.result.parse(view)).not.toThrow()
+    const status = await call<TallyStatusView>('status')
+    expect(status.pricingErrors).toEqual([expect.stringContaining('"bad"')])
   })
 
   it('prices peak requests at the off-peak rate for peakSavings', async () => {

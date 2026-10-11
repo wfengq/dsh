@@ -93,6 +93,11 @@ export interface UsageGroup {
   requestCount: number
   unpricedCount: number
   unknownUsageCount: number
+  /**
+   * Entries of this group whose session was deleted (it is no longer listed by the session
+   * query). Only set when grouping by session. Deleted sessions still count in every amount.
+   */
+  deletedCount?: number
 }
 
 export interface SessionUsage {
@@ -153,6 +158,11 @@ export interface BandView {
 /** The bundled price catalog, listing for each model the price version in effect. */
 export interface CatalogView {
   version: string
+  /**
+   * The user's price overrides in effect (unusable ones excluded), applied on top of the
+   * catalog. A manual override prices its route as `manual:<route>` and has no catalog entry.
+   */
+  overrides?: ProviderPriceOverride[]
   providers: {
     id: string
     currency: Currency

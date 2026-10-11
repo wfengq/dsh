@@ -1,4 +1,4 @@
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import Schema from '@deepseek-ai/schemastery'
 import type { ProviderPriceOverride } from 'dsh-tally-api'
@@ -18,10 +18,22 @@ export { TallyStore, type StoredEntry } from './store.js'
 
 export const name = 'dsh-tally'
 
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Same signature as the Loader's own declaration (`@deepseek-ai/cordis-plugin-loader`),
+     * repeated so this package does not depend on the Loader: volatile config values were
+     * committed into the running fiber, `paths` lists the changed config paths.
+     */
+    'loader/volatile-update'(paths: readonly (readonly string[])[]): void
+  }
+}
+
 export interface Config {
   /** Route id recorded in session logs -> pricing vendor in the catalog. */
   providerRoutes: Record<string, string>
-  overrides: ProviderPriceOverride[]
+  /** Volatile: edits from the settings page re-price without remounting the plugin. */
+  overrides: Volatile<ProviderPriceOverride[]>
   /** Ledger file; defaults to `$DSH_HOME/tally/tally.v1.sqlite`. */
   dbPath?: string
   backfillBatch: number
@@ -36,6 +48,9 @@ export interface Config {
   /** IANA time zone of budget periods; defaults to the host time zone. */
   timeZone?: string
 }
+
+/** Raw config as written in the entry (before volatile fields become references). */
+export type ConfigInput = Partial<Omit<Config, 'overrides'>> & { overrides?: ProviderPriceOverride[] }
 
 const Rates = Schema.object({
   input: Schema.string().required(),
@@ -61,11 +76,11 @@ const Override = Schema.union([
   }).description('手动填写每百万 token 的单价（十进制字符串）'),
 ])
 
-export const Config: Schema<Config> = Schema.object({
+export const Config: Schema<ConfigInput, Config> = Schema.object({
   providerRoutes: Schema.dict(Schema.string())
     .default({ 'deepseek-official': 'deepseek', 'deepseek-account': 'deepseek' })
     .description('会话日志中的路由 id 到价格数据厂商的映射'),
-  overrides: Schema.array(Override).default([]).description('厂商价格覆盖'),
+  overrides: Schema.array(Override).default([]).volatile().description('厂商价格覆盖'),
   dbPath: Schema.string().description('账本数据库路径，默认 $DSH_HOME/tally/tally.v1.sqlite'),
   backfillBatch: Schema.natural().min(1).default(20).description('回填时每批读取的会话数'),
   balanceDebounceMs: Schema.natural().default(3000).description('记账后刷新余额前的去抖时间（毫秒）'),
@@ -76,7 +91,21 @@ export const Config: Schema<Config> = Schema.object({
 })
 
 export function apply(ctx: Context, config: Config) {
-  ctx.plugin(TallyPricingService, { providerRoutes: config.providerRoutes, overrides: config.overrides })
+  // The Loader dispatches `loader/volatile-update` to this entry's fiber only, so the pricing
+  // service (its own fiber) is told about override edits from here.
+  const overrideListeners = new Set<() => void>()
+  ctx.on('loader/volatile-update', (paths) => {
+    if (!paths.some(path => path[0] === 'overrides')) return
+    for (const listener of [...overrideListeners]) listener()
+  })
+  ctx.plugin(TallyPricingService, {
+    providerRoutes: config.providerRoutes,
+    overrides: config.overrides,
+    watch: (listener) => {
+      overrideListeners.add(listener)
+      return () => { overrideListeners.delete(listener) }
+    },
+  })
   ctx.plugin(TallyBalance, {
     debounceMs: config.balanceDebounceMs,
     minIntervalMs: config.balanceMinIntervalMs,

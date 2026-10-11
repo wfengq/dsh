@@ -45,10 +45,11 @@ export interface Cursor {
  * query filters use. `StoredEntry` is a superset, so full entries can be passed where rows are expected.
  */
 export type UsageRow = Pick<StoredEntry, 'sessionId' | 'workspaceId' | 'at' | 'route' | 'model' | 'tokens' | 'usageKnown'>
+  & Partial<Pick<StoredEntry, 'deleted'>>
 
 /** Column lists for array-mode reads; the row mappers below index into them by position. */
 const ENTRY_COLUMNS = 'id, session_id, root_session_id, workspace_id, at, route, model, input, cache_read, cache_write, output, reasoning, usage_known, deleted'
-const USAGE_COLUMNS = 'session_id, workspace_id, at, route, model, input, cache_read, cache_write, output, reasoning, usage_known'
+const USAGE_COLUMNS = 'session_id, workspace_id, at, route, model, input, cache_read, cache_write, output, reasoning, usage_known, deleted'
 
 /** A row read with `setReturnArrays(true)`, in the order of its column list. */
 type ArrayRow = unknown[]
@@ -167,6 +168,8 @@ export class TallyStore {
   #inTransaction = false
   readonly #insert: StatementSync
   readonly #markDeleted: StatementSync
+  readonly #markRestored: StatementSync
+  readonly #ledgerSessions: StatementSync
   readonly #putCursor: StatementSync
   readonly #getCursor: StatementSync
   readonly #getMeta: StatementSync
@@ -181,7 +184,10 @@ export class TallyStore {
         input, cache_read, cache_write, output, reasoning, usage_known, deleted
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (id) DO NOTHING`)
-    this.#markDeleted = db.prepare('UPDATE entries SET deleted = 1 WHERE session_id = ?')
+    this.#markDeleted = db.prepare('UPDATE entries SET deleted = 1 WHERE session_id = ? AND deleted = 0')
+    this.#markRestored = db.prepare('UPDATE entries SET deleted = 0 WHERE session_id = ? AND deleted = 1')
+    this.#ledgerSessions = db.prepare('SELECT session_id, MIN(deleted), MAX(deleted) FROM entries GROUP BY session_id')
+    this.#ledgerSessions.setReturnArrays(true)
     this.#putCursor = db.prepare(`
       INSERT INTO cursors (session_id, last_seq, state) VALUES (?, ?, ?)
       ON CONFLICT (session_id) DO UPDATE SET last_seq = excluded.last_seq, state = excluded.state`)
@@ -203,8 +209,23 @@ export class TallyStore {
     return Number(result.changes) > 0
   }
 
+  /** Flags every entry of a session as belonging to a deleted session. Amounts are unaffected. */
   markSessionDeleted(sessionId: string): void {
     this.#markDeleted.run(sessionId)
+  }
+
+  /** Clears the deleted flag of a session's entries (the session was listed again). */
+  markSessionRestored(sessionId: string): void {
+    this.#markRestored.run(sessionId)
+  }
+
+  /**
+   * Every session that has entries, with whether all / any of its entries are marked deleted
+   * (they differ when entries were added after the session was marked).
+   */
+  ledgerSessions(): { sessionId: string; allDeleted: boolean; anyDeleted: boolean }[] {
+    return (this.#ledgerSessions.all() as unknown as ArrayRow[])
+      .map(r => ({ sessionId: r[0] as string, allDeleted: r[1] === 1, anyDeleted: r[2] === 1 }))
   }
 
   setCursor(sessionId: string, c: Cursor): void {
@@ -352,5 +373,6 @@ function toUsageRow(r: ArrayRow): UsageRow {
     model: r[4] as string,
     tokens: tokensOf(r[5], r[6], r[7], r[8], r[9]),
     usageKnown: r[10] === 1,
+    deleted: r[11] === 1,
   }
 }

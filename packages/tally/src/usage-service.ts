@@ -362,6 +362,7 @@ export class TallyUsage extends Service implements UsageService {
       const records = await query.listSessions(signal)
       if (signal.aborted) return
       for (const record of records) this.headers.set(record.header.id, record.header)
+      this.reconcileDeleted(records)
       const all = full || this.store.getMeta(BACKFILL_COMPLETE) === undefined
       const todo = all ? records : records.filter(r => !this.recorder.isSettled(r.header.id))
       const progress = { done: 0, total: todo.length }
@@ -397,6 +398,33 @@ export class TallyUsage extends Service implements UsageService {
       if (!signal.aborted) this.store.setMeta(BACKFILL_COMPLETE, String(Date.now()))
     } catch (error) {
       if (!signal.aborted) this.fail(undefined, new Error(`Backfill failed: ${messageOf(error)}`))
+    }
+  }
+
+  /**
+   * Flag the entries of sessions that the session query no longer lists as belonging to a
+   * deleted session, and clear the flag of sessions listed again. dsh announces no session
+   * deletion, so comparing the ledger with the listing is the only signal. Only runs when the
+   * listing holds at least one persisted record: without a working persistence backend it lists
+   * live sessions alone, and every other session would be flagged. A session that is live in
+   * `ctx.sessions` counts as listed. Flags never change amounts.
+   */
+  private reconcileDeleted(records: readonly { header: { id: string }; persisted: boolean }[]): void {
+    if (!records.some(r => r.persisted)) return
+    const listed = new Set<string>(records.map(r => r.header.id))
+    const live = this.state.sessions
+    try {
+      this.store.transaction(() => {
+        for (const { sessionId, allDeleted, anyDeleted } of this.store.ledgerSessions()) {
+          if (listed.has(sessionId) || live?.get(sessionId as SessionId) !== undefined) {
+            if (anyDeleted) this.store.markSessionRestored(sessionId)
+          } else if (!allDeleted) {
+            this.store.markSessionDeleted(sessionId)
+          }
+        }
+      })
+    } catch (error) {
+      this.fail(undefined, new Error(`Deleted-session check failed: ${messageOf(error)}`))
     }
   }
 

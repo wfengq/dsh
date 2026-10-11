@@ -1,7 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { afterEach, describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { loadCatalog } from 'dsh-pricing-data'
 import type { ProviderPriceOverride } from 'dsh-tally-api'
-import { TallyPricing } from '../src/pricing-service.js'
+import * as tally from '../src/index.js'
+import { TallyPricing, type TallyPricingService } from '../src/pricing-service.js'
 
 const M = 1_000_000
 const sh = (iso: string) => Date.parse(iso + '+08:00')
@@ -95,5 +102,96 @@ describe('TallyPricing', () => {
     expect(p.quote({ provider: 'my-gateway', model: 'deepseek-flash', usage: u, at: wed10 })?.amount).toBe('10.04')
     expect(p.catalogVersion()).toBe(catalog.generatedAt)
     expect(p.overrides()).toEqual(overrides)
+  })
+})
+
+describe('volatile price overrides', () => {
+  let dir: string | undefined
+  let root: Context | undefined
+
+  afterEach(async () => {
+    await root?.fiber.dispose()
+    root = undefined
+    if (dir !== undefined) rmSync(dir, { recursive: true, force: true })
+    dir = undefined
+  })
+
+  /** Mount dsh-tally as a real Loader entry, the way the settings service edits it. */
+  async function mount(overrides: ProviderPriceOverride[]) {
+    dir = mkdtempSync(join(tmpdir(), 'dsh-tally-volatile-'))
+    const base = { dbPath: join(dir, 'tally.v1.sqlite'), budgetPath: join(dir, 'budgets.json') }
+    root = new Context()
+    root.baseUrl = pathToFileURL(dir).href + '/'
+    await root.plugin(Loader)
+    root.loader.internal = {
+      version: 'v2',
+      async import(specifier: string) {
+        if (specifier === 'dsh-tally') return tally
+        throw new Error(`unexpected Loader import: ${specifier}`)
+      },
+    } as unknown as NonNullable<typeof root.loader.internal>
+    const id = await root.loader.create({ name: 'dsh-tally', config: { ...base, overrides } })
+    await root.loader.await()
+    const loader = root.loader
+    return {
+      entry: () => loader.resolve(id),
+      pricing: () => root!.get('tallyPricing') as unknown as TallyPricingService,
+      async setOverrides(next: ProviderPriceOverride[]) {
+        await loader.update(id, { config: { ...base, overrides: next } })
+        await loader.await()
+      },
+    }
+  }
+
+  /**
+   * Every `ctx.get` returns a fresh cordis proxy, so the instance is identified by its state
+   * object, which a remount would create anew.
+   */
+  const stateOf = (service: TallyPricingService) => (service as unknown as { state: object }).state
+
+  const gateway: ProviderPriceOverride = { provider: 'my-gateway', kind: 'alias', target: { provider: 'deepseek' } }
+  const q = (provider: string) => ({ provider, model: 'deepseek-flash', usage: u, at: wed10 })
+
+  it('re-prices an added alias override without remounting the plugin', async () => {
+    const host = await mount([])
+    const service = host.pricing()
+    const fiber = host.entry().fiber
+    expect(service.quote(q('my-gateway'))).toBeNull()
+
+    await host.setOverrides([gateway])
+
+    expect(stateOf(host.pricing()) === stateOf(service), 'same service instance').toBe(true)
+    expect(host.entry().fiber === fiber, 'same fiber').toBe(true)
+    expect(service.quote(q('my-gateway'))).toEqual(service.quote(q('deepseek')))
+    expect(service.quote(q('my-gateway'))?.amount).toBe('10.04')
+    expect(service.overrides()).toEqual([gateway])
+    expect(service.configErrors).toEqual([])
+    expect(service.pricing.catalogView(wed10).overrides).toEqual([gateway])
+  })
+
+  it('skips an invalid override from an update and reports it, then clears the error when it is removed', async () => {
+    const host = await mount([gateway])
+    const service = host.pricing()
+    await host.setOverrides([gateway, { provider: 'gw-x', kind: 'alias', target: { provider: 'no-such-vendor' } }])
+    expect(stateOf(host.pricing()) === stateOf(service), 'same service instance').toBe(true)
+    expect(service.overrides()).toEqual([gateway])
+    expect(service.configErrors.map(e => e.message)).toEqual([expect.stringContaining('"gw-x"')])
+    expect(service.quote(q('gw-x'))).toBeNull()
+
+    await host.setOverrides([])
+    expect(service.configErrors).toEqual([])
+    expect(service.quote(q('my-gateway'))).toBeNull()
+  })
+
+  it('notifies change observers when the pricing is rebuilt', async () => {
+    const host = await mount([])
+    const service = host.pricing()
+    const seen: string[][] = []
+    const stop = service.watchChanges(() => { seen.push(service.overrides().map(o => o.provider)) })
+    await host.setOverrides([gateway])
+    expect(seen).toEqual([['my-gateway']])
+    stop()
+    await host.setOverrides([])
+    expect(seen).toEqual([['my-gateway']])
   })
 })

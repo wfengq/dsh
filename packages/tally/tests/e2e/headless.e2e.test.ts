@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startMockLlmServer, type MockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
 import { loadCatalog } from 'dsh-pricing-data'
+import type { ProviderPriceOverride } from 'dsh-tally-api'
 import { Config } from '../../src/index.js'
 import { TallyPricing } from '../../src/pricing-service.js'
 import { toUsage } from '../../src/query.js'
@@ -158,10 +159,10 @@ describe('dsh-tally in the real dsh headless profile', () => {
 
     // Known usage must be priceable by the same catalog and route mapping the plugin uses.
     // The plugin's own schema defaults (`providerRoutes`, `overrides`), as the overlay mounts it without config.
-    const defaults = Config({} as Config)
+    const defaults = Config({})
     const pricing = new TallyPricing(loadCatalog(), {
       providerRoutes: defaults.providerRoutes,
-      overrides: defaults.overrides,
+      overrides: defaults.overrides.get().map(o => structuredClone(o) as ProviderPriceOverride),
     })
     for (const e of entries) {
       if (e.usageKnown) expect(pricing.quoteRoute(e.route, e.model, toUsage(e.tokens), e.at), e.id).not.toBeNull()

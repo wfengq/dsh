@@ -24,8 +24,8 @@ const WATCH_STATUS_INTERVAL_MS = 1000
 
 interface WatchState {
   queue: TallyWatchFrame[]
-  /** Frames were dropped: the next dequeue yields a fresh `hello` first. */
-  overflowed: boolean
+  /** Frames were dropped, or the price overrides changed: the next dequeue yields a fresh `hello` first. */
+  rehello: boolean
   wake: (() => void) | undefined
   lastStatusAt: number
   timer: ReturnType<typeof setTimeout> | undefined
@@ -203,7 +203,8 @@ export class TallyRemote extends TypertRemoteService {
    * order they happen, plus `status` frames (at most one per second) while a backfill or
    * rebuild runs and once more when it ends. The queue holds at most `WATCH_QUEUE_LIMIT`
    * frames; past that the oldest are dropped and a fresh `hello` precedes the next dequeue,
-   * so the client refreshes everything. The hello is taken when the stream is first pulled,
+   * so the client refreshes everything; a price-override edit also sends a fresh `hello`, as
+   * it re-prices every amount. The hello is taken when the stream is first pulled,
    * and frames queued before an overflow-hello may predate it: a client must refetch its
    * data on every hello instead of applying queued deltas cumulatively. Disposing the
    * service ends every open stream. Aborting `signal` ends the stream and removes every
@@ -213,7 +214,7 @@ export class TallyRemote extends TypertRemoteService {
   async *watch(signal: AbortSignal): AsyncIterable<TallyWatchFrame> {
     if (signal.aborted) return
     // Plain object: the service may run behind a cordis proxy.
-    const state: WatchState = { queue: [], overflowed: false, wake: undefined, lastStatusAt: -Infinity, timer: undefined, closed: false }
+    const state: WatchState = { queue: [], rehello: false, wake: undefined, lastStatusAt: -Infinity, timer: undefined, closed: false }
     const wake = (): void => {
       const resolve = state.wake
       state.wake = undefined
@@ -225,7 +226,7 @@ export class TallyRemote extends TypertRemoteService {
       state.queue.push(frame)
       if (state.queue.length > WATCH_QUEUE_LIMIT) {
         state.queue.shift()
-        state.overflowed = true
+        state.rehello = true
       }
       wake()
     }
@@ -247,13 +248,19 @@ export class TallyRemote extends TypertRemoteService {
       this.ctx.on('tally/balance-changed', snapshot => { push({ type: 'balance-changed', snapshot }) }),
       this.ctx.on('tally/budget-crossed', alert => { push({ type: 'budget-crossed', alert }) }),
       this.usage().watchProgress(onProgress),
+      // New price overrides change every amount the client shows: make it refetch everything.
+      this.pricing().watchChanges(() => {
+        if (state.closed) return
+        state.rehello = true
+        wake()
+      }),
     ]
     signal.addEventListener('abort', wake, { once: true })
     try {
       yield { type: 'hello', status: this.statusView() }
       while (!signal.aborted && !state.closed) {
-        if (state.overflowed) {
-          state.overflowed = false
+        if (state.rehello) {
+          state.rehello = false
           yield { type: 'hello', status: this.statusView() }
           continue
         }

@@ -141,15 +141,36 @@ describe('TallyStore', () => {
     expect(rows).toEqual([
       {
         sessionId: 's1', workspaceId: '/work', at: 1, route: 'deepseek-official', model: 'deepseek-flash',
-        tokens: { input: 1, cacheRead: 2, cacheWrite: 3, output: 4, reasoning: 5 }, usageKnown: true,
+        tokens: { input: 1, cacheRead: 2, cacheWrite: 3, output: 4, reasoning: 5 }, usageKnown: true, deleted: false,
       },
       {
         sessionId: 's2', workspaceId: null, at: 2, route: 'deepseek-official', model: 'deepseek-flash',
-        tokens: { input: 100, cacheRead: 900, cacheWrite: 0, output: 50 }, usageKnown: false,
+        tokens: { input: 100, cacheRead: 900, cacheWrite: 0, output: 50 }, usageKnown: false, deleted: false,
       },
     ])
     expect(store.usage({ ...range, rootSessionId: 'other' }).map(r => r.sessionId)).toEqual(['s2'])
     expect(store.usage({ ...range, sessionIds: [] })).toEqual([])
+  })
+
+  it('marks a session deleted and restores it, listing ledger sessions with their flags', () => {
+    store = TallyStore.open(path)
+    store.upsertEntry(entry({ id: 's1:1', at: 1 }))
+    store.upsertEntry(entry({ id: 's1:2', at: 2 }))
+    store.upsertEntry(entry({ id: 's2:1', sessionId: 's2', at: 3 }))
+    const flags = () => store.ledgerSessions().sort((a, b) => (a.sessionId < b.sessionId ? -1 : 1))
+    expect(flags()).toEqual([
+      { sessionId: 's1', allDeleted: false, anyDeleted: false },
+      { sessionId: 's2', allDeleted: false, anyDeleted: false },
+    ])
+    store.markSessionDeleted('s1')
+    expect(store.usage({ from: 0, to: 10 }).map(r => [r.sessionId, r.deleted]).sort()).toEqual([['s1', true], ['s1', true], ['s2', false]])
+    expect(store.entries({ from: 0, to: 10 }).filter(e => e.deleted).map(e => e.id).sort()).toEqual(['s1:1', 's1:2'])
+    // An entry recorded after the mark is not deleted yet.
+    store.upsertEntry(entry({ id: 's1:3', at: 4 }))
+    expect(flags()[0]).toEqual({ sessionId: 's1', allDeleted: false, anyDeleted: true })
+    store.markSessionRestored('s1')
+    expect(flags()[0]).toEqual({ sessionId: 's1', allDeleted: false, anyDeleted: false })
+    expect(store.usage({ from: 0, to: 10 }).some(r => r.deleted)).toBe(false)
   })
 
   it('clears all tables when user_version differs', () => {

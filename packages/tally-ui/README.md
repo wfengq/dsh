@@ -14,11 +14,23 @@ dsh plugin --profile web add dsh-tally dsh-tally-ui
 
 浏览器端代码只在 dsh 启动时加载，所以安装或升级后需要重启 dsh。
 
+## 配置项
+
+`elements` 下的五个开关控制各个界面元素是否显示，默认都打开。它们是可在设置页直接编辑的配置项（volatile），切换后不需要重新加载插件。设置页里本插件的部分本身不能关闭。
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `elements.composerDock` | `true` | 输入框上方的费用条。 |
+| `elements.turnTail` | `true` | 每轮回复末尾的本轮费用。 |
+| `elements.headerUtilities` | `true` | 会话头部的会话累计费用。 |
+| `elements.sidebarTab` | `true` | 右侧栏的用量看板。 |
+| `elements.budgetToast` | `true` | 预算达到提醒线时的弹出提示。 |
+
 ## 构建说明
 
 `pnpm run build`（仓库根目录）依次执行：
 
-1. `tsc -p .`：编译 Host 端入口 `src/index.ts` 到 `lib/index.js`。Host 端只声明插件名，`apply` 为空。
+1. `tsc -p .`：编译 Host 端入口 `src/index.ts` 到 `lib/index.js`。Host 端只声明插件名和配置项（界面元素开关），`apply` 为空。
 2. `tsc -p tsconfig.client.json`：只生成浏览器端代码的类型声明，输出到 `lib/types`。
 3. `tsdown`：把 `src/client/index.ts` 打包成 `lib/client.js`。配置照搬 dsh 官方 `packages/client/tsdown.client.ts` 里的 `clientConfig()`：
    - 格式为 `cjs`，平台为 `browser`，输出文件名固定为 `client.js`，带 sourcemap；

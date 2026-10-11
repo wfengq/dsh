@@ -27,6 +27,8 @@ class FakeSessionQuery extends Service {
   reads: string[] = []
   listSignal: AbortSignal | undefined
   gate: Promise<void> = Promise.resolve()
+  /** What every listed record reports as `persisted`. */
+  persisted = true
 
   constructor(ctx: Context) {
     super(ctx, 'sessionQuery')
@@ -34,7 +36,7 @@ class FakeSessionQuery extends Service {
 
   async listSessions(signal?: AbortSignal) {
     this.listSignal = signal
-    return this.sessions.map(s => ({ header: s.header, live: s.live === true, persisted: true }))
+    return this.sessions.map(s => ({ header: s.header, live: s.live === true, persisted: this.persisted }))
   }
 
   async readSession(id: string) {
@@ -97,12 +99,12 @@ afterEach(async () => {
 const fibers: Array<{ dispose(): Promise<void> }> = []
 
 /** Dispose the loaded plugin (closing its store) and load it again on the same database. */
-async function restart(config: Partial<tally.Config> = {}): Promise<TallyUsage> {
+async function restart(config: tally.ConfigInput = {}): Promise<TallyUsage> {
   await fibers.pop()!.dispose()
   return load(config)
 }
 
-async function load(config: Partial<tally.Config> = {}): Promise<TallyUsage> {
+async function load(config: tally.ConfigInput = {}): Promise<TallyUsage> {
   const fiber = ctx.plugin(tally, { dbPath: join(dir, 'tally.v1.sqlite'), budgetPath: join(dir, 'budgets.json'), ...config })
   fibers.push(fiber)
   await fiber
@@ -519,3 +521,78 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 200 && !predicate(); i++) await new Promise(resolve => setTimeout(resolve, 5))
   expect(predicate()).toBe(true)
 }
+
+describe('deleted sessions', () => {
+  const sessionA = () => session('A', seqd([...turn(1)]))
+  const sessionB = () => session('B', seqd([...turn(1, U2), ...turn(2)]))
+  const bySession = (usage: TallyUsage) => usage.query({ from: 0, to: Date.now() + 1, groupBy: 'session' })
+  const deleted = async (usage: TallyUsage) =>
+    Object.fromEntries((await bySession(usage)).map(g => [g.key, g.deletedCount]))
+  const costs = async (usage: TallyUsage) => (await bySession(usage)).map(g => [g.key, g.cost])
+
+  it('marks a session that is no longer listed as deleted without changing any amount, and restores it when it is listed again', async () => {
+    query.sessions = [sessionA(), sessionB()]
+    let usage = await load()
+    await usage.idle()
+    expect(await deleted(usage)).toEqual({ A: 0, B: 0 })
+    const before = await costs(usage)
+    expect(before).toHaveLength(2)
+
+    query.sessions = [sessionA()]
+    usage = await restart()
+    await usage.idle()
+    const groups = await bySession(usage)
+    const b = groups.find(g => g.key === 'B')!
+    expect(b.requestCount).toBe(2)
+    expect(b.deletedCount).toBe(2)
+    expect(groups.find(g => g.key === 'A')!.deletedCount).toBe(0)
+    expect(await costs(usage)).toEqual(before)
+    // Only session grouping reports deletions.
+    const byModel = await usage.query({ from: 0, to: Date.now() + 1, groupBy: 'model' })
+    expect(byModel.every(g => g.deletedCount === undefined)).toBe(true)
+    expect(byModel.reduce((n, g) => n + g.requestCount, 0)).toBe(3)
+
+    query.sessions = [sessionA(), sessionB()]
+    usage = await restart()
+    await usage.idle()
+    expect(await deleted(usage)).toEqual({ A: 0, B: 0 })
+    expect(await costs(usage)).toEqual(before)
+  })
+
+  it('marks nothing when the listing is empty', async () => {
+    query.sessions = [sessionA(), sessionB()]
+    let usage = await load()
+    await usage.idle()
+    query.sessions = []
+    usage = await restart()
+    await usage.idle()
+    expect(await deleted(usage)).toEqual({ A: 0, B: 0 })
+  })
+
+  it('marks nothing when no listed record is persisted', async () => {
+    query.sessions = [sessionA(), sessionB()]
+    let usage = await load()
+    await usage.idle()
+    query.sessions = [sessionA()]
+    query.persisted = false
+    usage = await restart()
+    await usage.idle()
+    expect(await deleted(usage)).toEqual({ A: 0, B: 0 })
+  })
+
+  it('does not mark a session that is live but not listed yet', async () => {
+    query.sessions = [sessionA()]
+    await ctx.plugin(FakeSessions)
+    const sessions = ctx.get('sessions') as unknown as FakeSessions
+    let usage = await load()
+    await usage.idle()
+    for (const id of ['L1', 'L2']) {
+      const live = liveSession(id)
+      for (let i = 0; i < live.all.length; i++) live.emitNext(ctx)
+    }
+    sessions.live.set('L1', { header: { id: 'L1', createdAt: 0 } })
+    usage = await restart()
+    await usage.idle()
+    expect(await deleted(usage)).toEqual({ A: 0, L1: 0, L2: 1 })
+  })
+})
