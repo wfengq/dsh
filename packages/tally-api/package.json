@@ -1,6 +1,22 @@
 {
   "name": "dsh-tally-api",
   "version": "0.1.0",
+  "description": "dsh-tally 的类型接口：用量、计价、余额、预算服务和事件，供其他 dsh 插件依赖",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "types",
+    "usage",
+    "cost"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfengq/dsh.git",
+    "directory": "packages/tally-api"
+  },
+  "homepage": "https://github.com/wfengq/dsh/tree/main/packages/tally-api#readme",
+  "bugs": "https://github.com/wfengq/dsh/issues",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -28,5 +44,8 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

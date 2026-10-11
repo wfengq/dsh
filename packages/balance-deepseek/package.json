@@ -1,6 +1,20 @@
 {
   "name": "dsh-tally-balance-deepseek",
   "version": "0.1.0",
+  "description": "为 dsh-tally 提供 DeepSeek 余额查询（API key 与官方账号两种方式）",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "balance"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfengq/dsh.git",
+    "directory": "packages/balance-deepseek"
+  },
+  "homepage": "https://github.com/wfengq/dsh/tree/main/packages/balance-deepseek#readme",
+  "bugs": "https://github.com/wfengq/dsh/issues",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -41,5 +55,8 @@
     "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
     "@deepseek-ai/dsh-deepseek-account": "0.2.0-rc.2",
     "@deepseek-ai/schemastery": "3.18.4"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

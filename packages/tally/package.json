@@ -1,6 +1,23 @@
 {
   "name": "dsh-tally",
   "version": "0.1.0",
+  "description": "dsh 的用量、计价、余额与预算共享数据层：按请求记账、预算提醒、浏览器 Remote API 和对账工具",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "usage",
+    "cost",
+    "budget",
+    "ledger"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfengq/dsh.git",
+    "directory": "packages/tally"
+  },
+  "homepage": "https://github.com/wfengq/dsh/tree/main/packages/tally#readme",
+  "bugs": "https://github.com/wfengq/dsh/issues",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -62,5 +79,8 @@
     "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
     "@deepseek-ai/dsh-typert-registry": "0.2.0-rc.2",
     "@deepseek-ai/schemastery": "3.18.4"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

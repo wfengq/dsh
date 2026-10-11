@@ -11,9 +11,12 @@
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "pretypecheck": "pnpm run build",
     "typecheck": "pnpm -r run typecheck",
-    "dsh:channel": "node scripts/use-dsh-channel.mjs"
+    "dsh:channel": "node scripts/use-dsh-channel.mjs",
+    "trust:report": "node scripts/trust-report.mjs",
+    "changeset": "changeset"
   },
   "devDependencies": {
+    "@changesets/cli": "2.31.1",
     "@deepseek-ai/dsh": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm-mock-server": "0.2.0-rc.2",
     "@types/node": "^22",
