@@ -39,6 +39,7 @@ export function apply(ctx: Context, config: Config) {
         config.officialRoute,
         apiKeyFetcher({
           baseURL: config.baseURL,
+          keyName: config.apiKeyRef,
           resolveKey: async () => (await c.credentials.resolve(config.apiKeyRef as CredentialRef))?.value,
         }),
       ),

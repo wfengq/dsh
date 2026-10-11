@@ -20,8 +20,10 @@ const THRESHOLDS = [
 /** Mutable runtime state, kept in one plain object because service methods may run on a cordis proxy. */
 interface BudgetState {
   readonly file: BudgetFile
-  /** Evaluations of recorded entries run one after another through this chain; it never rejects. */
+  /** Evaluations run one after another through this chain; it never rejects. */
   chain: Promise<void>
+  /** Recorded entries not yet evaluated; the next link of the chain takes all of them at once. */
+  pending: TallyEntry[]
   disposed: boolean
 }
 
@@ -38,7 +40,8 @@ function messageOf(error: unknown): string {
  * `ctx.tallyBudget`: spending limits per day or month with one alert per threshold and period.
  *
  * Every live `tally/recorded` entry with a cost triggers an evaluation of the budgets it
- * affects. Spent amounts come from `ctx.tallyUsage` and are compared with the limit as exact
+ * affects. Each evaluation re-queries the whole period, so entries that queue up while another
+ * evaluation runs are coalesced: a budget is evaluated once per period for the whole batch. Spent amounts come from `ctx.tallyUsage` and are compared with the limit as exact
  * BigInt fixed-point values. A threshold is persisted as fired before its event is emitted, so a
  * restart never repeats an alert; the history that backfill and rebuild write is never evaluated
  * because those entries do not emit `tally/recorded`.
@@ -55,6 +58,7 @@ export class TallyBudget extends Service implements BudgetService {
     const state: BudgetState = this.state = {
       file: BudgetFile.load(config.path),
       chain: Promise.resolve(),
+      pending: [],
       disposed: false,
     }
 
@@ -89,20 +93,33 @@ export class TallyBudget extends Service implements BudgetService {
   private onRecorded(entry: TallyEntry): void {
     if (entry.cost === null) return
     const state = this.state
+    state.pending.push(entry)
     state.chain = state.chain
-      .then(() => (state.disposed ? undefined : this.evaluate(entry)))
+      .then(() => (state.disposed ? undefined : this.drain()))
       .catch((error: unknown) => {
         this.ctx.logger.warn(`tally: budget evaluation failed: ${messageOf(error)}`)
       })
   }
 
-  private async evaluate(entry: TallyEntry): Promise<void> {
-    const currency = entry.cost!.currency
+  /** Evaluate everything queued so far; later links of the chain then find nothing pending. */
+  private async drain(): Promise<void> {
+    const batch = this.state.pending.splice(0)
+    if (batch.length === 0) return
     for (const budget of this.state.file.budgets()) {
-      if (this.state.disposed) return
-      if (budget.scope.workspaceId !== undefined && budget.scope.workspaceId !== entry.workspaceId) continue
-      if (budget.limit.currency !== currency) continue
-      await this.evaluateBudget(budget, entry.at)
+      // The latest entry of each period stands for all earlier ones of that period (the query
+      // covers them anyway); periods keep the order in which their last entry arrived.
+      const latest = new Map<number, number>()
+      for (const entry of batch) {
+        if (budget.scope.workspaceId !== undefined && budget.scope.workspaceId !== entry.workspaceId) continue
+        if (budget.limit.currency !== entry.cost!.currency) continue
+        const { start } = periodBounds(budget.period, entry.at, this.timeZone)
+        latest.delete(start)
+        latest.set(start, entry.at)
+      }
+      for (const at of latest.values()) {
+        if (this.state.disposed) return
+        await this.evaluateBudget(budget, at)
+      }
     }
   }
 

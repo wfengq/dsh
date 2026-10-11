@@ -6,13 +6,15 @@ export interface ApiKeyFetcherOptions {
   baseURL: string
   /** Resolved on every call so a changed credential applies without a restart. */
   resolveKey: () => Promise<string | undefined>
+  /** Name of the credential, used in the "not configured" error. It is a name, never the key itself. */
+  keyName?: string
   fetch?: typeof fetch
 }
 
 /**
  * Fetcher for `GET {baseURL}/user/balance` with an API key.
  *
- * Every error thrown from here carries a fixed message: the key is only ever placed in the
+ * Every error thrown from here carries a fixed message (the credential name at most): the key is only ever placed in the
  * request header and never reaches an error, log or snapshot. Errors raised by `fetch` or
  * `res.json()` are replaced rather than forwarded, because their text is not under our control.
  */
@@ -20,7 +22,7 @@ export function apiKeyFetcher(opts: ApiKeyFetcherOptions): BalanceFetcher {
   const fetch = opts.fetch ?? globalThis.fetch
   return async (signal) => {
     const key = await opts.resolveKey()
-    if (!key) throw new Error('DEEPSEEK_API_KEY not configured')
+    if (!key) throw new Error(`${opts.keyName ?? 'DEEPSEEK_API_KEY'} not configured`)
 
     let url: URL
     try {

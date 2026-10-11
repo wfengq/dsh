@@ -162,6 +162,8 @@ describe('dsh-tally-balance-deepseek plugin', () => {
     expect([...rec.registered.keys()].sort()).toEqual(['a', 'o'])
     await rec.registered.get('o')!(new AbortController().signal)
     expect(seenAuth).toBe('Bearer sk-other')
+    delete credentialValues.MY_KEY
+    await expect(rec.registered.get('o')!(new AbortController().signal)).rejects.toThrow('MY_KEY not configured')
   })
 
   it('fetches the account balance with the pinned client metadata', async () => {

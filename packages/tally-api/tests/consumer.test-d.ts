@@ -26,6 +26,7 @@ test('services are merged into Context', () => {
   expectTypeOf(ctx.tallyBalance.register).parameter(1).toEqualTypeOf<BalanceFetcher>()
   expectTypeOf(ctx.tallyBalance.register).returns.toEqualTypeOf<() => void>()
   expectTypeOf(ctx.tallyBudget.list).returns.items.toHaveProperty('limit')
+  expectTypeOf(ctx.tallyBudget.status).returns.toEqualTypeOf<{ errors: string[] }>()
   expectTypeOf(ctx.tallyPricing).toEqualTypeOf<PricingService>()
 })
 

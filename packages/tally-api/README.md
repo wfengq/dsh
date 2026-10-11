@@ -37,7 +37,7 @@ export function apply(ctx: Context) {
 | `ctx.tallyPricing` | 报价。`quote` 的 `provider` 是日志里的路由 id，会先应用 `providerRoutes` 和 `overrides` 再查价格；查不到返回 `null`，永远不会返回 `"0"` |
 | `ctx.tallyUsage` | 账本查询：`query`、`session`、`rebuild`、`status` |
 | `ctx.tallyBalance` | 余额注册表与缓存：`get`、`refresh`、`register` |
-| `ctx.tallyBudget` | 预算：`list`、`set`、`remove` |
+| `ctx.tallyBudget` | 预算：`list`、`set`、`remove`、`status` |
 
 | 事件 | 说明 |
 | --- | --- |

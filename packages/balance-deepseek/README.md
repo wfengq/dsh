@@ -56,7 +56,7 @@ dsh plugin --profile web add dsh-tally dsh-tally-balance-deepseek
 
 | 错误信息 | 含义 |
 | --- | --- |
-| `DEEPSEEK_API_KEY not configured` | 凭据服务里找不到 API key。 |
+| `<apiKeyRef> not configured`（默认 `DEEPSEEK_API_KEY not configured`） | 凭据服务里找不到名为 `apiKeyRef` 的 API key；信息里是配置的凭据名，不含密钥。 |
 | `DeepSeek balance: HTTP 401` | 接口返回非 2xx（状态码随实际情况）。 |
 | `DeepSeek balance: request failed` | 网络错误。 |
 | `DeepSeek balance: invalid baseURL` | `baseURL` 不是合法的 URL。 |

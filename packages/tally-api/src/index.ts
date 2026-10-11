@@ -184,6 +184,11 @@ export interface BudgetService {
   list(): Budget[]
   set(b: Budget): void
   remove(id: string): void
+  /**
+   * Problems found while loading the budget file (for example a corrupt file that was set aside).
+   * `errors` is empty when everything loaded cleanly.
+   */
+  status(): { errors: string[] }
 }
 
 export {}

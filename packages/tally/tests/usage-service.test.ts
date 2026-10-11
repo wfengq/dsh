@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context, Service, type Message } from '@deepseek-ai/cordis'
 import { interruptedTurnClosers, type SessionEvent } from '@deepseek-ai/dsh-session'
-import type { TallyEntry } from 'dsh-tally-api'
+import type { BudgetAlert, BudgetService, TallyEntry } from 'dsh-tally-api'
 import * as tally from '../src/index.js'
 import type { TallyUsage } from '../src/usage-service.js'
 import {
@@ -103,7 +103,7 @@ async function restart(config: Partial<tally.Config> = {}): Promise<TallyUsage> 
 }
 
 async function load(config: Partial<tally.Config> = {}): Promise<TallyUsage> {
-  const fiber = ctx.plugin(tally, { dbPath: join(dir, 'tally.v1.sqlite'), ...config })
+  const fiber = ctx.plugin(tally, { dbPath: join(dir, 'tally.v1.sqlite'), budgetPath: join(dir, 'budgets.json'), ...config })
   fibers.push(fiber)
   await fiber
   return ctx.get('tallyUsage') as unknown as TallyUsage
@@ -399,11 +399,109 @@ describe('dsh-tally plugin', () => {
     expect(warned).toHaveLength(2)
   })
 
+  describe('with tallyBudget', () => {
+    const TZ = 'Asia/Shanghai'
+    // One U1 turn on deepseek-flash costs 0.000636 CNY, and every fixture event falls on 2026-10-14 (Shanghai).
+    const DAY_START = Date.parse('2026-10-14T00:00:00+08:00')
+    const budgetOf = () => ctx.get('tallyBudget') as unknown as BudgetService
+    const settle = () => new Promise<void>(resolve => setTimeout(resolve, 15))
+    const limit002 = { id: 'daily', period: 'day', scope: {}, limit: { amount: '0.002', currency: 'CNY' } } as const
+
+    function collectAlerts(): BudgetAlert[] {
+      const alerts: BudgetAlert[] = []
+      ctx.on('tally/budget-crossed', a => { alerts.push(a) })
+      return alerts
+    }
+
+    function liveTurns(id: string, count: number) {
+      const all = seqd(Array.from({ length: count }, (_, i) => turn(i + 1)).flat())
+      let visible = 0
+      const fake = { id, header: { id, createdAt: 0, cwd: '/live' }, inheritedEventCount: 0, isOwnSeq: () => true, ownEvents: () => all.slice(0, visible) }
+      return { emitTurn: (n: number) => { for (let i = (n - 1) * 6; i < n * 6; i++) { visible = i + 1; ctx.emit('session/event' as never, fake as never, all[i] as never) } } }
+    }
+
+    it('emits exactly one tally/budget-crossed per threshold as live entries cross them', async () => {
+      const usage = await load({ timeZone: TZ })
+      await usage.idle()
+      budgetOf().set(limit002)
+      const alerts = collectAlerts()
+      const live = liveTurns('live', 5)
+
+      live.emitTurn(1)
+      live.emitTurn(2)
+      await settle()
+      expect(alerts).toEqual([]) // 0.001272 of 0.002
+
+      live.emitTurn(3)
+      await waitUntil(() => alerts.length === 1)
+      await settle()
+      expect(alerts).toEqual([{
+        budgetId: 'daily',
+        threshold: 0.8,
+        spent: { amount: '0.001908', currency: 'CNY' },
+        limit: { amount: '0.002', currency: 'CNY' },
+        periodStart: DAY_START,
+      }])
+
+      live.emitTurn(4)
+      await waitUntil(() => alerts.length === 2)
+      expect(alerts[1]).toMatchObject({ threshold: 1, spent: { amount: '0.002544', currency: 'CNY' }, periodStart: DAY_START })
+
+      live.emitTurn(5) // further spending in the same period alerts nothing more
+      await settle()
+      expect(alerts.map(a => a.threshold)).toEqual([0.8, 1])
+    })
+
+    it('emits one alert per threshold when a burst of live entries crosses both at once', async () => {
+      const usage = await load({ timeZone: TZ })
+      await usage.idle()
+      budgetOf().set(limit002)
+      const alerts = collectAlerts()
+      const live = liveTurns('burst', 4)
+      for (let n = 1; n <= 4; n++) live.emitTurn(n)
+      await waitUntil(() => alerts.length === 2)
+      await settle()
+      expect(alerts.map(a => [a.threshold, a.spent.amount])).toEqual([[0.8, '0.002544'], [1, '0.002544']])
+    })
+
+    it('does not alert for history written by a backfill or a rebuild, only for the next live entry', async () => {
+      const usage = await load({ timeZone: TZ })
+      await usage.idle()
+      budgetOf().set(limit002)
+      const alerts = collectAlerts()
+      const total = async (u: TallyUsage) => (await u.query({ from: 0, to: Date.now() + 1, groupBy: 'day', tz: TZ }))
+        .flatMap(g => g.cost).map(c => c.amount)
+
+      // Backfill after a restart: the budget is reloaded from its file, and the history already exceeds it.
+      query.sessions = [session('h1', seqd([...turn(1), ...turn(2), ...turn(3), ...turn(4)]))]
+      const next = await restart({ timeZone: TZ })
+      await next.idle()
+      expect(await total(next)).toEqual(['0.002544'])
+      expect(budgetOf().list()).toHaveLength(1)
+      await settle()
+      expect(alerts).toEqual([])
+
+      // Rebuild rewrites the same history.
+      query.sessions.push(session('h2', seqd([...turn(1), ...turn(2)])))
+      await next.rebuild()
+      expect(await total(next)).toEqual(['0.003816'])
+      await settle()
+      expect(alerts).toEqual([])
+
+      // A live entry evaluates the budget against everything recorded, so both thresholds fire once.
+      const live = liveTurns('after', 1)
+      live.emitTurn(1)
+      await waitUntil(() => alerts.length === 2)
+      await settle()
+      expect(alerts.map(a => [a.threshold, a.spent.amount])).toEqual([[0.8, '0.004452'], [1, '0.004452']])
+    })
+  })
+
   it('runs the backfill in the background and stops it on dispose', async () => {
     query.sessions = corpus()
     let release!: () => void
     query.gate = new Promise<void>(resolve => { release = resolve })
-    const fiber = ctx.plugin(tally, { dbPath: join(dir, 'tally.v1.sqlite'), backfillBatch: 1 })
+    const fiber = ctx.plugin(tally, { dbPath: join(dir, 'tally.v1.sqlite'), budgetPath: join(dir, 'budgets.json'), backfillBatch: 1 })
     await fiber // apply returns while the first read is still blocked
     const usage = ctx.get('tallyUsage') as unknown as TallyUsage
     await waitUntil(() => query.reads.length === 1)

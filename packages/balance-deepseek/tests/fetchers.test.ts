@@ -155,6 +155,12 @@ describe('apiKeyFetcher', () => {
     expect(received.path).toBeUndefined()
   })
 
+  it('names the configured credential in the "not configured" error', async () => {
+    const error = await errorOf(apiKeyFetcher({ baseURL, keyName: 'MY_KEY', resolveKey: async () => undefined })(signal()))
+    expect(error.message).toBe('MY_KEY not configured')
+    expect(error.message).not.toContain('DEEPSEEK_API_KEY')
+  })
+
   it('treats an empty key as not configured', async () => {
     const error = await errorOf(apiKeyFetcher({ baseURL, resolveKey: async () => '' })(signal()))
     expect(error.message).toBe('DEEPSEEK_API_KEY not configured')

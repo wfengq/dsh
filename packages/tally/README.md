@@ -110,7 +110,7 @@ ctx.tallyBudget.set({
 })
 ctx.tallyBudget.list()                 // 返回副本
 ctx.tallyBudget.remove('daily-cny')
-ctx.tallyBudget.status()               // { errors: string[] }，包含预算文件加载时的错误
+ctx.tallyBudget.status()               // { errors: string[] }，加载预算文件时的问题；一切正常时 errors 为空数组
 
 ctx.on('tally/budget-crossed', (alert) => {
   // { budgetId, threshold: 0.8 | 1, spent, limit, periodStart }
@@ -122,9 +122,10 @@ ctx.on('tally/budget-crossed', (alert) => {
 - **每个预算在每个周期内，0.8 和 1 两个阈值各只提醒一次**。一次跳过两个阈值时，先发 0.8 再发 1。比较用 BigInt 定点数精确进行，不使用浮点数。
 - 提醒记录与预算一起保存在预算文件里，且先写入再发事件，所以重启不会重复提醒。
 - **只有实时记账才会触发检查**：回填和重建写入的历史账目不发 `tally/recorded`，因此不会触发提醒。
-- 同时到达的多条记账事件按顺序依次检查；某次检查出错只会记一条警告日志，不影响后续检查。
+- 检查按顺序依次进行；同一个预算、同一个周期内排队的多条记账事件合并为一次检查（每次检查本来就会重新统计整个周期）。某次检查出错只会记一条警告日志，不影响后续检查。
 - `set` 会先校验，不合法（例如金额不是大于 0 的十进制字符串）时抛出 `tally: invalid budget: …`，文件保持不变。
 - 预算文件损坏时会被改名为 `budgets.json.corrupt-<时间戳>`，服务以空预算启动，原因见 `status().errors`。
+- 预算文件只应由同一时间的一个 dsh 进程写入。多个进程共用同一个 `$DSH_HOME` 并同时修改预算时，可能丢失其中一次修改；跨进程加锁计划随预算编辑器一起提供。
 
 ## 给挂件作者的接入示例
 

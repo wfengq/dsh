@@ -262,16 +262,81 @@ describe('TallyBudget', () => {
     await idle()
     await idle()
     expect(alerts.map(a => a.threshold)).toEqual([0.8, 1])
-    expect(usage.queries).toHaveLength(5)
   })
 
-  it('evaluates entries one after another, in arrival order', async () => {
+  it('evaluates a burst of entries with a single period query', async () => {
+    const budget = await load()
+    budget.set(daily)
+    usage.spent = { CNY: '12' }
+    for (let i = 0; i < 50; i++) ctx.emit('tally/recorded', entry({ at: T0 + i }))
+    await idle()
+    await idle()
+    expect(usage.queries).toHaveLength(1)
+    expect(alerts.map(a => [a.threshold, a.spent])).toEqual([
+      [0.8, { amount: '12', currency: 'CNY' }],
+      [1, { amount: '12', currency: 'CNY' }],
+    ])
+  })
+
+  it('coalesces entries queued behind a running evaluation, then evaluates them once', async () => {
+    const budget = await load()
+    budget.set(daily)
+    let release!: () => void
+    usage.gate = new Promise<void>(resolve => { release = resolve })
+    usage.spent = { CNY: '7' }
+    ctx.emit('tally/recorded', entry())
+    await idle()
+    expect(usage.queries).toHaveLength(1) // the first evaluation is running, blocked on its query
+    for (let i = 0; i < 5; i++) ctx.emit('tally/recorded', entry())
+    usage.gate = undefined
+    usage.spent = { CNY: '12' }
+    release()
+    await idle()
+    await idle()
+    // One query for the first entry, one for the five that queued up behind it.
+    expect(usage.queries).toHaveLength(2)
+    expect(alerts.map(a => a.threshold)).toEqual([0.8, 1])
+  })
+
+  it('evaluates each period of a burst once, in the order their last entries arrived', async () => {
+    const budget = await load()
+    budget.set(daily)
+    usage.spent = { CNY: '8' }
+    ctx.emit('tally/recorded', entry({ at: T0 }))
+    ctx.emit('tally/recorded', entry({ at: T0 + DAY }))
+    ctx.emit('tally/recorded', entry({ at: T0 + 1 }))
+    ctx.emit('tally/recorded', entry({ at: T0 + DAY + 1 }))
+    await idle()
+    await idle()
+    // The second period's entry arrived last, so the first period is evaluated before it.
+    expect(usage.queries.map(q => q.from)).toEqual([Date.UTC(2026, 9, 20), Date.UTC(2026, 9, 21)])
+    expect(alerts.map(a => [a.periodStart, a.threshold])).toEqual([
+      [Date.UTC(2026, 9, 20), 0.8],
+      [Date.UTC(2026, 9, 21), 0.8],
+    ])
+  })
+
+  it('does not count entries that match no budget when coalescing', async () => {
+    const budget = await load()
+    budget.set({ ...daily, scope: { workspaceId: 'w1' } })
+    usage.spent = { CNY: '12' }
+    ctx.emit('tally/recorded', entry({ workspaceId: 'w2' }))
+    ctx.emit('tally/recorded', entry({ workspaceId: 'w1' }))
+    ctx.emit('tally/recorded', entry({ workspaceId: 'w2' }))
+    await idle()
+    await idle()
+    expect(usage.queries).toHaveLength(1)
+    expect(alerts.map(a => a.threshold)).toEqual([0.8, 1])
+  })
+
+  it('evaluates entries one after another, never two evaluations at once', async () => {
     const budget = await load()
     budget.set(daily)
     let release!: () => void
     usage.gate = new Promise<void>(resolve => { release = resolve })
     usage.spent = { CNY: '9' }
     ctx.emit('tally/recorded', entry())
+    await idle()
     ctx.emit('tally/recorded', entry())
     await idle()
     expect(usage.queries).toHaveLength(1)
