@@ -19,6 +19,10 @@ interface Route {
   inflight: { promise: Promise<BalanceSnapshot>; controller: AbortController } | undefined
   /** Pending debounce or deferral timer for an automatic refresh. */
   timer: ReturnType<typeof setTimeout> | undefined
+  /** `timer` waits for `lastAutoAt + minIntervalMs`; further triggers neither shorten nor extend it. */
+  deferred: boolean
+  /** Time of the first trigger of the pending automatic refresh; bounds how long debouncing may postpone it. */
+  pendingSince: number | undefined
   /** Start time of the last automatic refresh. */
   lastAutoAt: number | undefined
 }
@@ -68,7 +72,7 @@ export class TallyBalance extends Service implements BalanceService {
   register(route: string, fetcher: BalanceFetcher): () => void {
     const routes = this.state.routes
     if (routes.has(route)) throw new Error('tally: balance provider already registered: ' + route)
-    const entry: Route = { fetcher, snapshot: undefined, inflight: undefined, timer: undefined, lastAutoAt: undefined }
+    const entry: Route = { fetcher, snapshot: undefined, inflight: undefined, timer: undefined, deferred: false, pendingSince: undefined, lastAutoAt: undefined }
     routes.set(route, entry)
     return () => {
       if (routes.get(route) !== entry) return
@@ -93,26 +97,38 @@ export class TallyBalance extends Service implements BalanceService {
   private release(entry: Route): void {
     clearTimeout(entry.timer)
     entry.timer = undefined
+    entry.deferred = false
+    entry.pendingSince = undefined
     entry.inflight?.controller.abort(new Error('dsh-tally: balance provider disposed'))
   }
 
   private onRecorded(route: string): void {
     const entry = this.state.routes.get(route)
     if (entry === undefined || this.state.lifetime.signal.aborted) return
-    this.schedule(route, entry, this.config.debounceMs)
+    // A refresh is already waiting for the minimum interval; it will cover this entry too.
+    if (entry.deferred) return
+    const now = Date.now()
+    entry.pendingSince ??= now
+    // Debounce, but never postpone the refresh more than `minIntervalMs` after the first trigger,
+    // so a steady stream of entries cannot starve it.
+    const delay = Math.max(0, Math.min(this.config.debounceMs, entry.pendingSince + this.config.minIntervalMs - now))
+    this.arm(route, entry, delay, false)
   }
 
-  private schedule(route: string, entry: Route, delay: number): void {
+  private arm(route: string, entry: Route, delay: number, deferred: boolean): void {
     clearTimeout(entry.timer)
+    entry.deferred = deferred
     entry.timer = setTimeout(() => {
       entry.timer = undefined
+      entry.deferred = false
       if (this.state.routes.get(route) !== entry) return
       const now = Date.now()
       const earliest = entry.lastAutoAt === undefined ? now : entry.lastAutoAt + this.config.minIntervalMs
-      if (now < earliest) return this.schedule(route, entry, earliest - now)
+      if (now < earliest) return this.arm(route, entry, earliest - now, true)
+      entry.pendingSince = undefined
       entry.lastAutoAt = now
       void this.refresh(route)
-    }, Math.max(0, delay))
+    }, delay)
   }
 
   private fetch(route: string, entry: Route): Promise<BalanceSnapshot> {

@@ -191,6 +191,42 @@ describe('TallyBalance', () => {
       expect(fetcher).toHaveBeenCalledTimes(2)
     })
 
+    it('refreshes within minIntervalMs of the first trigger even if entries never pause', async () => {
+      const balance = await load()
+      const fetcher = vi.fn(async () => CNY_86)
+      balance.register('r', fetcher)
+      for (let t = 0; t <= 58000; t += 2000) {
+        recorded('r')
+        if (t < 58000) await vi.advanceTimersByTimeAsync(2000)
+      }
+      // The last entry arrived at 58s; the cap lands the refresh at 60s, not 61s.
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(fetcher).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetcher).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not move a min-interval deferral when more entries arrive during it', async () => {
+      const balance = await load()
+      const fetcher = vi.fn(async () => CNY_86)
+      balance.register('r', fetcher)
+      const start = Date.now()
+      recorded('r')
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(7000)
+      recorded('r') // debounce fires at 13s and defers to 63s
+      await vi.advanceTimersByTimeAsync(3000)
+      for (const at of [20000, 40000, 62000]) {
+        await vi.advanceTimersByTimeAsync(start + at - Date.now())
+        recorded('r')
+      }
+      await vi.advanceTimersByTimeAsync(999)
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    })
+
     it('collapses a burst of entries into one refresh', async () => {
       const balance = await load()
       const fetcher = vi.fn(async () => CNY_86)
