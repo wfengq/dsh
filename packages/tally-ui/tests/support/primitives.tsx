@@ -43,3 +43,33 @@ export function Toast({ text, onDone }: { text: string; onDone: () => void; hold
     </div>
   )
 }
+
+/** Renders one button per option; selecting reports the chosen value like the real tablist. */
+export function SegmentedControl<Value extends string>(
+  { id, value, options, onChange, label }: {
+    id: string
+    value: Value
+    options: readonly { value: Value; label: string; disabled?: boolean }[]
+    onChange: (next: Value) => void
+    label: string
+    disabled?: boolean
+    className?: string
+  },
+) {
+  return (
+    <div role="tablist" aria-label={label}>
+      {options.map(option => (
+        <button
+          key={option.value}
+          id={`${id}-${option.value}`}
+          type="button"
+          role="tab"
+          aria-selected={option.value === value}
+          onClick={() => { if (option.value !== value) onChange(option.value) }}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}

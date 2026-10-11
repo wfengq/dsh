@@ -1,0 +1,147 @@
+.dsh-tally-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px;
+  overflow-y: auto;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dsh-tally-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dsh-tally-section h3,
+.dsh-tally-chart figcaption {
+  margin: 0 0 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dsh-tally-chart {
+  margin: 0;
+}
+
+.dsh-tally-chart svg,
+.dsh-tally-line {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 32 / 11;
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-radius: 8px;
+}
+
+.dsh-tally-line {
+  aspect-ratio: 32 / 6;
+}
+
+.dsh-tally-bar-peak {
+  fill: var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-tally-bar-offpeak {
+  fill: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.dsh-tally-polyline {
+  fill: none;
+  stroke: var(--dsw-alias-link);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.dsh-tally-dot {
+  fill: var(--dsw-alias-link);
+}
+
+.dsh-tally-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.dsh-tally-ranking {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dsh-tally-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.dsh-tally-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-tally-badge {
+  margin-left: 6px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-fact {
+  margin: 0;
+}
+
+.dsh-tally-hint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-error {
+  margin: 0;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-tally-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-link);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dsh-tally-unpriced {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-tally-unpriced span {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-tally-export {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

@@ -12,11 +12,14 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { CatalogView, TallyWatchFrame } from 'dsh-tally-api'
 import TALLY_REMOTE, { type TallyRemoteApi } from 'dsh-tally/remote'
 import { BudgetToast, type BudgetToastInjected } from './BudgetToast.tsx'
 import { CostDock, type CostDockInjected } from './CostDock.tsx'
+import { Dashboard, type DashboardInjected } from './dashboard/Dashboard.tsx'
+import { tabDefinition, TAB_ID } from './dashboard/definition.ts'
 import { elementsOf, type ElementsFormSnapshot } from './elements.ts'
 import { en, NS, zh, type TallyLocaleKey } from './locales.ts'
 import { SessionTotal, type SessionTotalInjected } from './SessionTotal.tsx'
@@ -29,7 +32,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export const inject = ['remote', 'slots', 'locale', 'configForms']
+export const inject = ['remote', 'slots', 'locale', 'configForms', 'sidebarRightTabs']
 
 /** Loader entry id of this plugin, which names its settings namespace. */
 const ENTRY_ID = 'tally-ui'
@@ -38,6 +41,7 @@ const DOCK = 'conversation.composer.dock'
 const TURN_TAIL = 'conversation.chat.turnTail'
 const UTILITIES = 'conversation.session.header.utilities'
 const OVERLAY = 'shell.overlay'
+const SIDEBAR_TAB = 'sidebar.right.pane.tab'
 
 /** The value of a call, or `null` when it was refused or the transport failed. */
 async function valueOf<T>(call: Promise<RemoteResult<T>>): Promise<T | null> {
@@ -124,5 +128,31 @@ export async function apply(ctx: Context): Promise<void> {
       locale: NS,
       inject: (): BudgetToastInjected => ({ hooks: { elements, alerts: store.alerts }, dismissAlert }),
     }, BudgetToast))
+
+    // The dashboard tab exists only while `elements.sidebarTab` is on: the switch registers and withdraws it.
+    scope.slots.inject(SIDEBAR_TAB, () => {
+      const t = scope.locale.bind(NS)
+      const dashboard: DashboardInjected = { remote }
+      let withdraw: (() => void) | undefined
+      const sync = () => {
+        const wanted = elements.getSnapshot().sidebarTab
+        if (wanted && withdraw === undefined) {
+          const unregisterType = scope.sidebarRightTabs.register(tabDefinition(t))
+          const unregisterBody = scope.slots.register({
+            name: SIDEBAR_TAB,
+            key: TAB_ID,
+            locale: NS,
+            inject: (): DashboardInjected => dashboard,
+          }, Dashboard)
+          withdraw = () => { unregisterBody(); unregisterType() }
+        } else if (!wanted && withdraw !== undefined) {
+          withdraw()
+          withdraw = undefined
+        }
+      }
+      sync()
+      const unsubscribe = elements.subscribe(sync)
+      return () => { unsubscribe(); withdraw?.(); withdraw = undefined }
+    })
   })
 }
