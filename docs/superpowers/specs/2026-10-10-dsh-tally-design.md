@@ -47,7 +47,7 @@
 | `dsh-pricing-data` | 价格数据和纯函数 `quote()` | 无（不依赖 dsh） | 否 | 否 |
 | `dsh-tally-api` | Service Definition：只有类型和事件声明，运行时代码为零 | `@deepseek-ai/cordis`（peer，只用类型） | 否 | 否 |
 | `dsh-tally` | Service Provider：`ctx.tallyPricing`、`ctx.tallyUsage`、`ctx.tallyBalance` 的注册表，以及 `ctx.tallyBudget` 和 Remote API | api、pricing-data、官方 session、session-query、token-meter、home-paths；存储使用 Node 内置的 `node:sqlite` | 否 | 否 |
-| `dsh-tally-ui` | Consumer：参考界面 | api（只通过公开接口调用） | 否 | 只访问同源接口 |
+| `dsh-tally-ui` | Consumer：参考界面 | api，以及 `dsh-tally/remote` 的接口描述（打包时内联；只通过公开接口调用） | 否 | 只访问同源接口 |
 | `dsh-tally-balance-deepseek` | 余额提供方 | api | 是 | 是，只访问 DeepSeek 官方域名 |
 
 ```text
@@ -214,6 +214,8 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 `workspaceId` 取自会话元数据（`sessionQuery.listSessions()` 返回的工作区或目录）。缺失时为 `undefined`，按工作区分组时归入“未知工作区”。
 
 - 浏览器端通过 Remote API 的 `tally` 命名空间使用同样的能力：`query`、`session`、`balance`、`status`，以及订阅 `recorded` 和 `balance-changed` 事件。
+  - **实现方式（2026-10-11 核实 dsh 0.2.0-rc.2 后确定）**：Host 端是 `dsh-tally` 里的一个 `TypertRemoteService`（命名空间 `tally`）。官方的 `ctx.remote.$on` 只转发一份写死在 dsh 里的事件白名单，第三方无法加入，所以事件改为一个流式方法 `watch`：先推一帧当前状态，之后推 `recorded`、`balance-changed`、`budget-crossed` 三类帧；断线重连后客户端重新拉取，不依赖重放。
+  - 浏览器端调用需要一份带严格编解码器的接口描述（`TypertRemoteContribution`）。官方用构建期生成器产出这份描述，但生成器依赖 dsh 仓库内部的工作区结构，所以 `dsh-tally` 手写这份描述（用 zod），通过子路径 `dsh-tally/remote` 导出；第三方界面插件和 `dsh-tally-ui` 都从这里引入，再用 `ctx.remote.$mount()` 挂载。Host 端用同一套 zod schema 校验请求参数。
 - **版本承诺**：严格遵守 semver，只做加法。破坏性修改必须升主版本，并且旧主版本继续维护 6 个月。这条承诺写进 README。
 
 ### 5.4 余额 `ctx.tallyBalance` 与 `dsh-tally-balance-deepseek`
@@ -244,15 +246,19 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 
 所有元素都挂在官方 slot 上，每个元素都可以在设置里单独关闭：
 
+> 2026-10-11 修订：核实 dsh 0.2.0-rc.2 后发现，`conversation.composer.bar` 是只能放一个元素的 slot，占用它会替换掉整个官方输入框。费用条因此改挂在 `conversation.composer.dock`（输入框下方的列表 slot）。预算提醒的弹窗挂在 `shell.overlay`，使用官方 `Toast` 组件。
+
 | slot | 内容 |
 |---|---|
-| `conversation.composer.bar` | 本会话费用 · 今日费用 · 余额 · 当前时段（高峰或空闲）及距离下一次切换的倒计时 |
+| `conversation.composer.dock` | 本会话费用 · 今日费用 · 余额 · 当前时段（高峰或空闲）及距离下一次切换的倒计时 |
+| `shell.overlay` | 预算达到 80% 或 100% 时的提示（`Toast`） |
 | `conversation.chat.turnTail` | 这一轮的费用；悬停显示明细：输入、缓存命中、输出、命中率、重试次数、价格版本（可以点开查看来源） |
 | `conversation.session.header.utilities` | 会话累计费用（包含子代理），可以展开查看 |
 | `sidebar.right.pane.tab` | 用量看板：时间范围选择；按天的柱状图（高峰和空闲分色叠加）；按模型、工作区、会话排行；缓存命中率趋势；以事实形式给出的峰谷节省提示；导出 CSV；“未定价”请求的数量和处理入口 |
 | `settings.section` | 价格数据版本和来源；自定义厂商的价格映射；预算；显示位置开关；重建账本按钮和进度 |
 
-- 使用官方 `ui-primitives`，自动适配深浅色模式；图表是手写的轻量 SVG；文案提供中英文，走 `client-locale` 机制。
+- 使用官方 `ui-primitives`，自动适配深浅色模式；图表是手写的轻量 SVG；文案提供中英文，走 `client-locale` 机制（语言 id 为 `zh` 和 `en`）。
+- 浏览器代码按 dsh 的客户端模块格式预先打包（`window.__ModuleLoader__.load`），只允许从宿主共享模块表引入 `react`、`react-dom`、`@deepseek-ai/cordis` 和官方 `client-ui-*` 包，其余全部内联。各元素的开关和价格覆盖配置都声明为 `volatile` 配置项，设置页通过官方 `ctx.configForms` 读写，写入当前 profile 的 `cordis.patch.yml`。
 - 界面只调用 `dsh-tally-api` 的公开接口。
 
 ## 6. 错误处理
