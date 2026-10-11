@@ -21,8 +21,8 @@ export function useSnapshot<T>(source: Snapshot<T>): T {
 }
 
 /** Why a form cannot be edited, or `null` when it can. Memory mode is the most specific cause. */
-export function readonlyReason(view: FormView<unknown>): TallyLocaleKey | null {
-  if (view.mode === 'memory') return 'settings.readonly.memory'
+export function readonlyReason(view: FormView<unknown>, memoryKey: TallyLocaleKey = 'settings.readonly.memoryGeneric'): TallyLocaleKey | null {
+  if (view.mode === 'memory') return memoryKey
   if (view.status !== 'ready') return 'settings.readonly.unavailable'
   if (!view.writable) return 'settings.readonly.notWritable'
   return null

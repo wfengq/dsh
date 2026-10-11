@@ -17,3 +17,8 @@ export function costLabel(group: UsageGroup, t: T): string {
   const amount = formatMoneyList(group.cost, FORMAT_LOCALE)
   return group.unpricedCount > 0 ? `${amount} + ${t('money.unpriced')}` : amount
 }
+
+/** Whether `url` is a plain http(s) link; anything else (`javascript:`, `data:`, ...) must never become an `href`. */
+export function isWebUrl(url: string): boolean {
+  return /^https?:\/\//.test(url)
+}

@@ -84,6 +84,20 @@ describe('catalog info', () => {
   })
 })
 
+describe('catalog source links', () => {
+  it('renders a non-http(s) source as text, never as a link', async () => {
+    const mounted = mount()
+    mounted.remote.catalog.mockResolvedValue(ok({
+      ...catalog,
+      providers: [{ ...catalog.providers[0]!, models: [{ ...catalog.providers[0]!.models[0]!, source: { url: 'javascript:alert(1)', retrievedAt: 'x' } }] }],
+    }))
+    cleanup()
+    render(<Section {...({ remote: mounted.remote, overridesForm: mounted.overrides, elementsForm: mounted.elements, status: mounted.status, close: () => {}, t } as unknown as SectionProps)} />)
+    await screen.findByText('deepseek-chat')
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+})
+
 describe('overrides editor', () => {
   async function openManual(view: ReturnType<typeof mount>) {
     fireEvent.click(await screen.findByRole('tab', { name: label('settings.override.manual') }))
@@ -206,6 +220,12 @@ describe('element switches', () => {
     await waitFor(() => { expect(view.elements.set).toHaveBeenCalledWith('elements.turnTail', false) })
   })
 
+  it('gives the switches a neutral read-only reason in memory mode', async () => {
+    mount({ elements: { mode: 'memory', writable: false } })
+    expect(await screen.findByText(label('settings.readonly.memoryGeneric'))).toBeTruthy()
+    expect(screen.queryByText(label('settings.readonly.memory'))).toBeNull()
+  })
+
   it('shows a missing switch as on and disables all when not writable', async () => {
     mount({ elements: { writable: false } })
     const toggle = await screen.findByRole('switch', { name: label('settings.element.sidebarTab') }) as HTMLButtonElement
@@ -229,6 +249,36 @@ describe('rebuild', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: label('settings.cancel') }))
     expect(view.remote.rebuild).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('stays disabled after the call until a backfill has been seen and finished', async () => {
+    const view = mount()
+    const button = await screen.findByRole('button', { name: label('settings.rebuildAction') }) as HTMLButtonElement
+    fireEvent.click(button)
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: label('settings.confirm') }))
+    await waitFor(() => { expect(view.remote.rebuild).toHaveBeenCalled() })
+    await waitFor(() => { expect(button.disabled).toBe(true) })
+    act(() => { view.status.set(statusView({ done: 1, total: 2 })) })
+    expect(button.disabled).toBe(true)
+    act(() => { view.status.set(statusView(null)) })
+    expect(button.disabled).toBe(false)
+  })
+
+  it('stops waiting for a status frame after a bounded time', async () => {
+    vi.useFakeTimers()
+    try {
+      const view = mount()
+      const button = screen.getByRole('button', { name: label('settings.rebuildAction') }) as HTMLButtonElement
+      fireEvent.click(button)
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: label('settings.confirm') }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(view.remote.rebuild).toHaveBeenCalled()
+      expect(button.disabled).toBe(true)
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+      expect(button.disabled).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('disables the button and shows progress while a backfill runs, then recovers', async () => {

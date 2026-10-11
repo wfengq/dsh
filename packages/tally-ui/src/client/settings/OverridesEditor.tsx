@@ -58,7 +58,7 @@ function summary(override: ProviderPriceOverride, t: T): string {
 /** Lists, adds and removes price overrides. Read-only, with the reason, when the config form cannot be written. */
 export function OverridesEditor({ form, t }: { form: OverridesFace; t: T }): ReactNode {
   const view = useSnapshot(form)
-  const reason = readonlyReason(view)
+  const reason = readonlyReason(view, 'settings.readonly.memory')
   const locked = reason !== null
   const current = view.value?.overrides ?? []
   const [kind, setKind] = useState<Kind>('alias')

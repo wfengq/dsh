@@ -4,7 +4,7 @@ import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogView, TallyEntry, TurnUsage, UsageGroup } from 'dsh-tally-api'
 import type { Elements } from './elements.ts'
 import { formatTokens, hitRate } from './format.ts'
-import { costLabel, FORMAT_LOCALE, type T } from './labels.ts'
+import { costLabel, FORMAT_LOCALE, isWebUrl, type T } from './labels.ts'
 import type { Snapshot } from './store.ts'
 import './TurnCost.css'
 
@@ -112,7 +112,7 @@ function priceVersions(attempts: readonly TallyEntry[], catalog: CatalogView | n
   return [...seen].map(([version, url], i) => (
     <span key={version}>
       {i > 0 ? ', ' : null}
-      {url !== undefined && /^https?:\/\//.test(url)
+      {url !== undefined && isWebUrl(url)
         ? <a href={url} target="_blank" rel="noreferrer noopener" data-tally="price-source">{version}</a>
         : version}
     </span>

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { CatalogView } from 'dsh-tally-api'
-import type { T } from '../labels.ts'
+import { isWebUrl, type T } from '../labels.ts'
 
 /** Price data version and, per model, the price version in effect with its date and source. */
 export function CatalogInfo({ load, t }: { load: () => Promise<CatalogView | null>; t: T }): ReactNode {
@@ -46,7 +46,9 @@ export function CatalogInfo({ load, t }: { load: () => Promise<CatalogView | nul
                           {' '}
                           <span>{model.effectiveFrom}</span>
                         </span>
-                        <a className="dsh-tally-meta" href={model.source.url} target="_blank" rel="noreferrer noopener">{t('settings.source')}</a>
+                        {isWebUrl(model.source.url)
+                          ? <a className="dsh-tally-meta" href={model.source.url} target="_blank" rel="noreferrer noopener">{t('settings.source')}</a>
+                          : <span className="dsh-tally-meta">{`${t('settings.source')}: ${model.source.url}`}</span>}
                       </li>
                     ))}
                   </ul>
