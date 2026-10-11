@@ -182,7 +182,7 @@ describe('tally Remote API', () => {
     })
     const at = sh('2026-10-14T10:00:00')
     const peak = await call<BandView | null>('band', { route: 'deepseek-official', model: 'deepseek-flash', at })
-    expect(peak).toEqual({ band: 'peak', until: sh('2026-10-14T12:00:00'), holidayCalendarMissing: true })
+    expect(peak).toEqual({ band: 'peak', until: sh('2026-10-14T12:00:00'), holidayCalendarMissing: false })
     expect(() => schemas.band.result.parse(peak)).not.toThrow()
     expect(await call('band', { route: 'deepseek-official', model: 'deepseek-flash', at: sh('2026-10-17T10:00:00') }))
       .toEqual({ band: 'offpeak', until: sh('2026-10-19T09:00:00'), holidayCalendarMissing: false })

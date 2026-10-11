@@ -9,7 +9,7 @@ const u = { inputTokens: M, cacheReadTokens: M, cacheWriteTokens: 0, outputToken
 
 describe('quote', () => {
   it('prices flash at the peak rate and flags the missing holiday calendar', () => {
-    expect(quote(c, { provider: 'deepseek', model: 'deepseek-flash', usage: u, at: sh('2026-10-14T10:00:00.000') }))
+    expect(quote(c, { provider: 'deepseek', model: 'deepseek-flash', usage: u, at: sh('2027-03-02T10:00:00.000') }))
       .toMatchObject({ amount: '10.04', currency: 'CNY', band: 'peak', priceVersion: 'deepseek-flash@2026-10-10', holidayCalendarMissing: true })
   })
 
@@ -124,7 +124,9 @@ describe('quote edge cases', () => {
 describe('bandAt', () => {
   it('reports the band and when it next changes', () => {
     expect(bandAt(c, { provider: 'deepseek', model: 'deepseek-flash', at: sh('2026-10-14T10:00:00.000') }))
-      .toEqual({ band: 'peak', until: sh('2026-10-14T12:00:00.000'), holidayCalendarMissing: true })
+      .toEqual({ band: 'peak', until: sh('2026-10-14T12:00:00.000'), holidayCalendarMissing: false })
+    expect(bandAt(c, { provider: 'deepseek', model: 'deepseek-flash', at: sh('2027-03-02T10:00:00.000') }))
+      .toEqual({ band: 'peak', until: sh('2027-03-02T12:00:00.000'), holidayCalendarMissing: true })
     expect(bandAt(c, { provider: 'deepseek', model: 'deepseek-v4-flash', at: sh('2026-10-17T10:00:00.000') }))
       .toEqual({ band: 'offpeak', until: sh('2026-10-19T09:00:00.000'), holidayCalendarMissing: false })
   })

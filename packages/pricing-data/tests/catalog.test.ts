@@ -15,7 +15,7 @@ describe('catalog.json', () => {
     const ds = c.providers.deepseek
     expect(ds).toMatchObject({ currency: 'CNY', unit: 'per_million_tokens', reasoningBilledAs: 'output' })
     expect(ds.aliases).toEqual({ 'deepseek-v4-flash': 'deepseek-flash', 'deepseek-v4-flash-vision-exp': 'deepseek-flash' })
-    expect(c.holidays).toEqual({ CN: { years: {} } })
+    expect(Object.keys(c.holidays.CN!.years)).toEqual(['2026'])
   })
 })
 
