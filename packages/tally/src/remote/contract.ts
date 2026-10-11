@@ -351,25 +351,38 @@ export const TALLY_REMOTE: TypertRemoteContribution = {
   ],
 }
 
-/** The part of a browser plugin context `mountTallyRemote` needs (`ctx.remote` of `dsh-api-remotes`). */
+/** The part of a browser plugin context `mountTallyRemote` needs (`ctx.remote` of `dsh-api-remotes`, `ctx.get`). */
 export interface TallyRemoteMountTarget {
   remote: { $mount(contribution: TypertRemoteContribution): unknown }
+  /** Cordis service lookup; the Client Remote exposes a mounted namespace as the service `remote.<namespace>`. */
+  get?(name: string): unknown
 }
 
-const ALREADY_MOUNTED = `Remote package "${PACKAGE}" is already registered`
+/**
+ * What a second mount of the contribution fails with. The browser's `$mount` (the api-gateway
+ * client) validates first and reports `client api: direct method tally/<method> is already mounted`
+ * (or a namespace conflict); the Typert registry behind it reports the package as already registered.
+ */
+const ALREADY_MOUNTED = [
+  new RegExp(`^client api: (?:direct|scoped) method ${NAMESPACE}/\\w+ is already mounted$`),
+  new RegExp(`^client api: namespace "${NAMESPACE}" conflicts with an existing Remote namespace$`),
+  new RegExp(`Remote package "${PACKAGE}" is already registered`),
+]
 
 /**
  * Mounts the `tally` namespace on `ctx.remote`, tolerating another client plugin that mounted it
- * first (the Client Remote accepts each package once and throws for the second `$mount`). Resolves
- * `true` when this call mounted it (it is withdrawn when `ctx` is disposed) and `false` when it was
- * already there (it then lives as long as the plugin that mounted it). Any other failure rejects.
+ * first: when the namespace service `remote.tally` already exists the mount is skipped, and a
+ * concurrent mount that loses the race is recognized by its duplicate-mount error. Resolves `true`
+ * when this call mounted it (it is withdrawn when `ctx` is disposed) and `false` when it was already
+ * there (it then lives as long as the plugin that mounted it). Any other failure rejects.
  */
 export async function mountTallyRemote(ctx: TallyRemoteMountTarget): Promise<boolean> {
+  if (ctx.get?.(`remote.${NAMESPACE}`) !== undefined) return false
   try {
     await ctx.remote.$mount(TALLY_REMOTE)
     return true
   } catch (error) {
-    if (error instanceof Error && error.message.includes(ALREADY_MOUNTED)) return false
+    if (error instanceof Error && ALREADY_MOUNTED.some(pattern => pattern.test(error.message))) return false
     throw error
   }
 }

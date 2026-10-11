@@ -248,7 +248,8 @@ export const inject = ['remote']
 
 export async function apply(ctx: Context) {
   // 挂载后 ctx.remote.tally 才可用；插件卸载时命名空间随之撤回。
-  // 其他插件（例如 dsh-tally-ui）可能已经挂载过，mountTallyRemote 把这种情况当作成功。
+  // 其他插件（例如 dsh-tally-ui）可能已经挂载过：mountTallyRemote 发现 remote.tally 已存在时跳过挂载，
+  // 并发挂载时宿主报出的“已挂载”错误也当作成功。
   await mountTallyRemote(ctx)
 
   ctx.inject(['remote.tally'], (ctx) => {
@@ -299,7 +300,7 @@ export async function apply(ctx: Context) {
 - 页面所在插件的 `package.json` 中，`dsh.client.inject` 要包含 `remote`。
 - `dsh-tally/remote` 和 zod 必须打包进自己的 bundle：dsh 宿主只共享固定的几个模块（`react`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-ui-*` 等），别的模块在浏览器里无法 `require()`。
 - 每次调用返回 `RemoteResult`：成功为 `{ ok: true, value }`，失败为 `{ ok: false, error: { code, message } }`，`code` 见上文的错误代码表。
-- `mountTallyRemote(ctx)` 返回 `true` 表示由本插件挂载（随本插件卸载而撤回），返回 `false` 表示已由其他插件挂载（命名空间随那个插件卸载而撤回，此时 `ctx.inject(['remote.tally'], …)` 的回调会随之停止）。除“已挂载”以外的错误照常抛出。
+- 不要直接调用 `ctx.remote.$mount(TALLY_REMOTE)`：同一页面里第二次挂载会失败（宿主报 `client api: direct method tally/… is already mounted`）。`mountTallyRemote(ctx)` 先检查 `remote.tally` 服务是否已存在，存在就不再挂载；并发挂载输掉时出现的这类错误（以及 Typert 注册表的 `Remote package "dsh-tally" is already registered`）都视为成功。它返回 `true` 表示由本插件挂载（随本插件卸载而撤回），返回 `false` 表示已由其他插件挂载（命名空间随那个插件卸载而撤回，此时 `ctx.inject(['remote.tally'], …)` 的回调会随之停止）。除“已挂载”以外的错误照常抛出。
 - 时间字段（`from`、`to`、`at`）必须是 `Date` 能表示的整数毫秒（绝对值不超过 8.64e15），否则返回 `gateway/bad-request`。
 - **向前兼容**：以后的次版本可能给枚举字段增加新值、给 `watch` 流增加新的帧类型。客户端遇到不认识的帧类型必须忽略（照常 `accept()`），不能报错或断开。注意：把旧版 `dsh-tally/remote` 打包进自己 bundle 的客户端用的是旧的严格编解码器，遇到新的帧类型或枚举值会解码失败；需要随 `dsh-tally` 升级重新打包。
 

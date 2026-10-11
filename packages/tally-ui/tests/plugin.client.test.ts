@@ -198,17 +198,28 @@ describe('dsh-tally-ui browser plugin', () => {
 
   it('carries on when another client plugin mounted the tally namespace first', async () => {
     const { ctx, remote, registrations, tally } = fakeContext()
-    remote.$mount.mockImplementation(async () => { throw new Error('typert: Remote package "dsh-tally" is already registered') })
+    // The gateway client's text: it validates before the Typert registry sees the package.
+    remote.$mount.mockImplementation(async () => { throw new Error('client api: direct method tally/status is already mounted') })
     await apply(ctx as never)
     expect(remote.$mount).toHaveBeenCalledTimes(1)
     expect(registrations.map(r => r.id).filter(Boolean)).toContain('tally.turn')
     await vi.waitFor(() => { expect(tally.query).toHaveBeenCalled() })
   })
 
+  it('does not mount when the remote.tally namespace service already exists', async () => {
+    const { ctx, remote, registrations } = fakeContext()
+    const lookups: string[] = []
+    Object.assign(ctx, { get: (name: string) => { lookups.push(name); return name === 'remote.tally' ? {} : undefined } })
+    await apply(ctx as never)
+    expect(lookups).toContain('remote.tally')
+    expect(remote.$mount).not.toHaveBeenCalled()
+    expect(registrations.map(r => r.id).filter(Boolean)).toContain('tally.turn')
+  })
+
   it('mounts twice without failing, as two plugins sharing one Client Remote would', async () => {
     const mounted = new Set<string>()
     const mount = async (contribution: { package: string }) => {
-      if (mounted.has(contribution.package)) throw new Error(`typert: Remote package "${contribution.package}" is already registered`)
+      if (mounted.has(contribution.package)) throw new Error('client api: direct method tally/status is already mounted')
       mounted.add(contribution.package)
     }
     const first = fakeContext()

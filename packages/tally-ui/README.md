@@ -73,7 +73,7 @@ dsh plugin --profile web add dsh-tally dsh-tally-ui
 
 **样式**：采用“factory 执行时注入 `<style>`”的方式，不使用 `.module.css`。`src/client` 下的 `.css` 文件在打包时被转换成一段代码，factory 执行时向 `document.head` 插入一个 `<style data-plugin="dsh-tally-ui" data-plugin-css="dsh-tally-ui/<文件名>">`（与 dsh 官方插件的标记相同，插件卸载时由 dsh 回收）。类名不做哈希，统一加 `dsh-tally-` 前缀避免冲突。样式只使用 `--dsw-alias-*` 语义变量和 `--dsw-elevation-*`，不写主题选择器和字面颜色值。
 
-**接口描述**：浏览器端调用 Remote API 需要一份带严格编解码器的接口描述（`TypertRemoteContribution`）。dsh 官方用构建期生成器产出这份描述，但生成器依赖 dsh 仓库内部的工作区结构，所以由 `dsh-tally` 手写（`dsh-tally/remote`，见 `packages/tally/src/remote/contract.ts`），本包在启动时用其中的 `mountTallyRemote(ctx)` 挂载：它调用 `ctx.remote.$mount()`，如果另一个客户端插件已经挂载过 `tally`（宿主对同一个包的第二次挂载会抛出 `Remote package "dsh-tally" is already registered`），就视为成功，继续使用已有的命名空间。
+**接口描述**：浏览器端调用 Remote API 需要一份带严格编解码器的接口描述（`TypertRemoteContribution`）。dsh 官方用构建期生成器产出这份描述，但生成器依赖 dsh 仓库内部的工作区结构，所以由 `dsh-tally` 手写（`dsh-tally/remote`，见 `packages/tally/src/remote/contract.ts`），本包在启动时用其中的 `mountTallyRemote(ctx)` 挂载：如果另一个客户端插件已经挂载过 `tally`（`remote.tally` 服务已存在），就跳过挂载，直接使用已有的命名空间；否则调用 `ctx.remote.$mount()`。两个插件同时挂载时，输掉的一方会收到宿主的 `client api: direct method tally/… is already mounted`（或 Typert 注册表的 `Remote package "dsh-tally" is already registered`），同样视为成功。
 
 **执行中的判断规则（Task 1）**：两条备用方案都没有用到，最终的端到端验收也是在这个前提下通过的。
 
