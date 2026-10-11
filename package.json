@@ -10,7 +10,8 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "pretypecheck": "pnpm run build",
-    "typecheck": "pnpm -r run typecheck"
+    "typecheck": "pnpm -r run typecheck",
+    "dsh:channel": "node scripts/use-dsh-channel.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.2.0-rc.2",

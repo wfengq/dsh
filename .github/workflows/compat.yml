@@ -1,0 +1,41 @@
+name: compat
+
+# Runs the whole suite against the dsh versions behind the `latest` and `alpha` npm dist-tags.
+# The daily schedule picks up new dsh releases (there is no publish webhook to listen to).
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 1 * * *'
+
+concurrency:
+  group: compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: dsh ${{ matrix.channel }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [latest, alpha]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - name: Use dsh ${{ matrix.channel }}
+        run: node scripts/use-dsh-channel.mjs ${{ matrix.channel }}
+      - run: pnpm install --no-frozen-lockfile
+      - name: Install Chromium for the web e2e
+        run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test
+      - run: pnpm typecheck
+      - run: pnpm test:e2e
+      - run: pnpm test:perf
