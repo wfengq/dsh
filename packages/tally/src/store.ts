@@ -153,6 +153,26 @@ export class TallyStore {
     }
   }
 
+  /**
+   * Opens an existing ledger for reading only (the reconcile CLI). Never creates, migrates or
+   * quarantines anything: a missing file or a different schema version is an error.
+   */
+  static openReadOnly(path: string): TallyStore {
+    if (!existsSync(path)) throw new Error('找不到账本数据库：' + path)
+    const db = new sqlite.DatabaseSync(path, { readOnly: true })
+    try {
+      db.exec('PRAGMA busy_timeout = 5000')
+      const row = db.prepare('PRAGMA user_version').get() as { user_version: number }
+      if (row.user_version !== SCHEMA_VERSION) {
+        throw new Error(`账本数据库版本不匹配（${row.user_version}，应为 ${SCHEMA_VERSION}）：请先在 dsh 中打开一次 dsh-tally 让它重建账本`)
+      }
+      return new TallyStore(db)
+    } catch (error) {
+      db.close()
+      throw error
+    }
+  }
+
   /** Opens, validates and prepares statements; the handle is closed on any failure. */
   static #create(path: string): TallyStore {
     const db = openDatabase(path)

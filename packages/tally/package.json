@@ -16,6 +16,9 @@
       "default": "./lib/remote/contract.js"
     }
   },
+  "bin": {
+    "dsh-tally": "./lib/cli.js"
+  },
   "files": [
     "lib",
     "cordis.patch.yml",

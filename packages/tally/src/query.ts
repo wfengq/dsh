@@ -229,7 +229,7 @@ function compareKeys(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
-function dayKeyer(tz: string): (at: number) => string {
+export function dayKeyer(tz: string): (at: number) => string {
   const fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
   // Time zone offsets change on quarter-hour boundaries, so one lookup per 15 minutes is exact
   // and saves the (comparatively slow) Intl call for dense ledgers. Keyed by bucket, so entries
