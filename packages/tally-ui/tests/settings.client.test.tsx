@@ -35,8 +35,11 @@ interface FormState {
 
 function fakeForm(patch: Partial<FormState> = {}) {
   const state = observable<FormState>({ status: 'ready', value: {}, writable: true, mode: 'host', revision: 1, ...patch })
-  return { ...state, set: vi.fn(async (_field: string, _value: unknown) => true) }
+  return { ...state, mutate: vi.fn(async (_ops: ReadonlyArray<{ op: 'set'; path: string[]; value: unknown }>) => true) }
 }
+
+/** The single-op mutation a field write sends. */
+const setOp = (path: string[], value: unknown) => [{ op: 'set', path, value }]
 
 const statusView = (backfill: { done: number; total: number } | null): TallyStatusView => ({
   usage: { backfill, errors: [] }, catalogVersion: 'v1', pricingErrors: [], budgetErrors: [], balanceRoutes: [],
@@ -117,10 +120,10 @@ describe('overrides editor', () => {
     fireEvent.change(rate, { target: { value: '0.0015' } })
     expect(save.disabled).toBe(false)
     fireEvent.click(save)
-    await waitFor(() => { expect(view.overrides.set).toHaveBeenCalledTimes(1) })
-    expect(view.overrides.set).toHaveBeenCalledWith('overrides', [
+    await waitFor(() => { expect(view.overrides.mutate).toHaveBeenCalledTimes(1) })
+    expect(view.overrides.mutate).toHaveBeenCalledWith(setOp(['overrides'], [
       { provider: 'my-proxy', kind: 'manual', currency: 'CNY', models: { m1: { input: '0.0015', output: '2' } } },
-    ])
+    ]))
   })
 
   it('rejects more than twelve fraction digits', async () => {
@@ -137,11 +140,11 @@ describe('overrides editor', () => {
     fireEvent.change(screen.getByLabelText(label('settings.override.targetProvider')), { target: { value: 'deepseek' } })
     fireEvent.change(screen.getByLabelText(label('settings.override.targetModel')), { target: { value: 'deepseek-chat' } })
     fireEvent.click(screen.getByRole('button', { name: label('settings.save') }))
-    await waitFor(() => { expect(view.overrides.set).toHaveBeenCalledTimes(1) })
-    expect(view.overrides.set).toHaveBeenCalledWith('overrides', [existing, { provider: 'proxy', kind: 'alias', target: { provider: 'deepseek', model: 'deepseek-chat' } }])
+    await waitFor(() => { expect(view.overrides.mutate).toHaveBeenCalledTimes(1) })
+    expect(view.overrides.mutate).toHaveBeenCalledWith(setOp(['overrides'], [existing, { provider: 'proxy', kind: 'alias', target: { provider: 'deepseek', model: 'deepseek-chat' } }]))
     fireEvent.click(screen.getAllByRole('button', { name: label('settings.remove') })[0]!)
-    await waitFor(() => { expect(view.overrides.set).toHaveBeenCalledTimes(2) })
-    expect(view.overrides.set).toHaveBeenLastCalledWith('overrides', [])
+    await waitFor(() => { expect(view.overrides.mutate).toHaveBeenCalledTimes(2) })
+    expect(view.overrides.mutate).toHaveBeenLastCalledWith(setOp(['overrides'], []))
   })
 
   it('is read-only in memory mode and says why', async () => {
@@ -149,7 +152,7 @@ describe('overrides editor', () => {
     expect(await screen.findByText(label('settings.readonly.memory'))).toBeTruthy()
     expect((screen.getByLabelText(label('settings.override.route')) as HTMLInputElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: label('settings.save') }) as HTMLButtonElement).disabled).toBe(true)
-    expect(view.overrides.set).not.toHaveBeenCalled()
+    expect(view.overrides.mutate).not.toHaveBeenCalled()
   })
 
   it('is read-only when the form is unavailable or not writable', async () => {
@@ -164,7 +167,7 @@ describe('overrides editor', () => {
     const view = mount()
     await openManual(view)
     fireEvent.change(screen.getByLabelText(label('settings.override.rateInput')), { target: { value: '1' } })
-    view.overrides.set.mockResolvedValueOnce(false)
+    view.overrides.mutate.mockResolvedValueOnce(false)
     fireEvent.click(screen.getByRole('button', { name: label('settings.save') }))
     expect(await screen.findByText(label('settings.saveFailed'))).toBeTruthy()
   })
@@ -217,7 +220,7 @@ describe('element switches', () => {
   it('writes the switch that was turned off', async () => {
     const view = mount()
     fireEvent.click(await screen.findByRole('switch', { name: label('settings.element.turnTail') }))
-    await waitFor(() => { expect(view.elements.set).toHaveBeenCalledWith('elements.turnTail', false) })
+    await waitFor(() => { expect(view.elements.mutate).toHaveBeenCalledWith(setOp(['elements', 'turnTail'], false)) })
   })
 
   it('gives the switches a neutral read-only reason in memory mode', async () => {
@@ -231,6 +234,26 @@ describe('element switches', () => {
     const toggle = await screen.findByRole('switch', { name: label('settings.element.sidebarTab') }) as HTMLButtonElement
     expect(toggle.getAttribute('aria-checked')).toBe('true')
     expect(toggle.disabled).toBe(true)
+  })
+
+  it('reads a class-based form whose methods depend on `this`, like the host ConfigForm', async () => {
+    class ClassForm {
+      private readonly store = observable<FormState>({ status: 'ready', value: { elements: { turnTail: false } }, writable: true, mode: 'host', revision: 1 })
+      getSnapshot() { return this.store.getSnapshot() }
+      subscribe(listener: () => void) { return this.store.subscribe(listener) }
+      async mutate() { return true }
+    }
+    const status = observable<TallyStatusView | null>(null)
+    const remote = {
+      catalog: vi.fn(async () => ok(catalog)),
+      budgets: vi.fn(async () => ok([])),
+      setBudget: vi.fn(async () => ok(undefined)),
+      removeBudget: vi.fn(async () => ok(undefined)),
+      rebuild: vi.fn(async () => ok(undefined)),
+    }
+    render(<Section {...({ remote, overridesForm: new ClassForm(), elementsForm: new ClassForm(), status, close: () => {}, t } as unknown as SectionProps)} />)
+    const toggle = await screen.findByRole('switch', { name: label('settings.element.turnTail') })
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
   })
 })
 

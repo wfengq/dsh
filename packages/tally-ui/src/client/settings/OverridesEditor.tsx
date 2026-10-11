@@ -73,7 +73,7 @@ export function OverridesEditor({ form, t }: { form: OverridesFace; t: T }): Rea
   const write = async (next: ProviderPriceOverride[]): Promise<boolean> => {
     setBusy(true)
     setFailed(false)
-    const accepted = await writeField(form, 'overrides', next)
+    const accepted = await writeField(form, ['overrides'], next)
     setBusy(false)
     if (!accepted) setFailed(true)
     return accepted

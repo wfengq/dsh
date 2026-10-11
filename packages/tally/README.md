@@ -5,6 +5,7 @@ DeepSeek Harness（dsh）的记账插件：从会话日志里读出每一次计�
 - **会话日志是唯一的事实来源**。账本只是派生出来的索引，随时可以从日志完整重建。
 - **不进入模型请求路径**。插件只监听 `session/event`，不监听任何 waterfall 事件，也不调用 `agent.inject()`。
 - 提供的服务：`ctx.tallyPricing`（报价）、`ctx.tallyUsage`（账本查询）、`ctx.tallyBalance`（余额）和 `ctx.tallyBudget`（预算）。接口定义在 [`dsh-tally-api`](../tally-api/README.md)。
+- 浏览器端通过 Remote 命名空间 `tally` 访问同样的数据，见下文 [Remote API](#remote-api)。
 
 ## 安装
 
@@ -180,6 +181,104 @@ export function apply(ctx: Context) {
 ```
 
 单独报价可以用 `ctx.tallyPricing.quote({ provider, model, usage, at })`，`provider` 直接传日志里的路由 id 即可，映射和覆盖会自动应用。
+
+## Remote API
+
+浏览器端（dsh Web 界面）通过 dsh API Gateway 调用本插件的 Remote 命名空间 `tally`，Host 端服务名为 `tallyRemote`。[`dsh-tally-ui`](../tally-ui/README.md) 就是基于这套接口实现的；第三方界面也可以直接使用。
+
+- 除无参方法外，每个方法只有一个参数 `request`（一个对象）。Host 端用 `dsh-tally/remote` 中同一份 zod schema 校验参数，不合法时返回 `gateway/bad-request`，消息里带出错的字段路径。
+- 时间一律是 epoch 毫秒；带 `from`/`to` 的请求是左闭右开区间，要求 `from < to`，跨度不超过 400 天。`tz` 必须是合法的 IANA 时区名。
+- 金额一律是十进制字符串；没有价格时对应字段为 `null` 或计入 `unpricedCount`，不会出现 `"0"`。
+- 本插件不读凭据、不发网络请求；Remote 方法只读账本、调用其他 tally 服务。
+
+### 方法
+
+| 方法 | 参数 `request` | 返回 | 说明 |
+| --- | --- | --- | --- |
+| `status` | 无 | `TallyStatusView` | 插件状态：回填进度和错误、价格目录版本、被忽略的价格覆盖、预算文件问题、已注册余额的路由。**空闲时 `usage.backfill` 为 `null`**，只有回填或重建正在进行时才有进度（与 `ctx.tallyUsage.status()` 不同，后者可能保留最后一次进度） |
+| `query` | `UsageQuery` | `UsageGroup[]` | 与 `ctx.tallyUsage.query` 相同；`groupBy: 'session'` 时已删除会话的分组带 `deletedCount` |
+| `session` | `{ sessionId }` | `SessionView` | 会话用量（含子代理明细），以及该会话最近一次请求的路由和模型 |
+| `turn` | `{ sessionId, fromSeq, toSeq }` | `TurnUsage` | 一轮对话的用量：`[fromSeq, toSeq]` 是会话事件序号的闭区间，返回合计和每次请求（含重试） |
+| `band` | `{ route, model, at }` | `BandView \| null` | `at` 时刻该路由和模型所处的价格时段及下次变化时间；没有价格时为 `null` |
+| `balance` | `{ route }` | `BalanceSnapshot \| null` | 缓存中的余额；还没有快照，或者从未成功且距上次尝试已超过 `balanceMinIntervalMs` 时，先查询一次。该路由没有余额提供者时为 `null` |
+| `refreshBalance` | `{ route }` | `BalanceSnapshot \| null` | 立即查询余额。失败时返回上一次成功的值并标记 `stale: true`，`errorCode` 说明原因 |
+| `budgets` | 无 | `Budget[]` | 全部预算 |
+| `setBudget` | `Budget` | 无 | 新建或替换预算，等待写盘完成后才返回 |
+| `removeBudget` | `{ id }` | 无 | 删除预算，等待写盘完成后才返回 |
+| `catalog` | 无 | `CatalogView` | 价格目录：每个模型当前的价格版本、生效日期和来源，以及生效中的价格覆盖（`overrides`） |
+| `peakSavings` | `{ from, to }` | `PeakSavings` | 高峰时段费用与同样用量按空闲时段价格计算的费用（按币种） |
+| `exportCsv` | `{ from, to, tz }` | `string` | 区间内的全部账目，CSV 格式（RFC 4180），时间按 `tz` 带时区偏移输出；没有价格的行 `cost` 等列留空 |
+| `rebuild` | 无 | 无 | 从会话日志重建整本账本；进度通过 `watch` 的 `status` 帧和 `status()` 报告 |
+| `watch` | 无（可传 `AbortSignal` 取消） | 流：`TallyWatchFrame` | 实时推送，见下文 |
+
+### 错误代码
+
+| 代码 | 出现在 | 含义 |
+| --- | --- | --- |
+| `gateway/bad-request` | 所有带参数的方法 | 参数不符合 schema（缺字段、类型不对、区间不合法、时区未知、`fromSeq > toSeq` 等） |
+| `tally/invalid-budget` | `setBudget` | 预算没有通过校验，例如金额不是大于 0 的十进制字符串；文件保持不变 |
+| `tally/not-found` | `removeBudget` | 没有这个 id 的预算 |
+| `tally/write-failed` | `setBudget`、`removeBudget` | 预算文件没能写入（例如等文件锁超时），修改没有生效 |
+
+### `watch` 帧
+
+`watch` 是一个流式方法，每一帧是下列之一：
+
+| 帧 | 内容 | 何时出现 |
+| --- | --- | --- |
+| `{ type: 'hello', status }` | `TallyStatusView` | 流的第一帧；队列溢出（积压超过 1000 帧，最旧的被丢弃）或价格覆盖被修改后，会再发一次 |
+| `{ type: 'recorded', entry }` | `TallyEntry` | 实时记账写入一条记录（回填和重建不发） |
+| `{ type: 'balance-changed', snapshot }` | `BalanceSnapshot` | 某个路由的余额快照变化（包括变为过期） |
+| `{ type: 'budget-crossed', alert }` | `BudgetAlert` | 预算达到 80% 或 100%；只由记录这次提醒的进程发出，同一阈值在一个周期内只提醒一次 |
+| `{ type: 'status', status }` | `TallyStatusView` | 回填或重建进行中，最多每秒一帧；结束时再发一帧（此时 `backfill` 为 `null`） |
+
+**每收到一个 `hello` 都要重新拉取全部数据**（`status`、当前会话、今日用量、余额等），不能在旧数据上继续累加之后的增量帧：`hello` 意味着中间可能丢了帧，或者全部金额已经按新的价格覆盖重新计算。断线重连（包括页面重新加载）后的第一帧也是 `hello`，按同样的规则处理即可保证重连前后显示的数值一致。
+
+### 第三方界面如何接入
+
+浏览器端需要一份接口描述（`TypertRemoteContribution`）才能调用 `tally` 命名空间。`dsh-tally` 在子路径 `dsh-tally/remote` 中提供（手写，形状与 dsh 官方生成的 `typert.remote-client.js` 相同；只依赖 zod，可以放进浏览器 bundle）。客户端插件在 `apply` 里挂载它：
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import type { TallyWatchFrame } from 'dsh-tally-api'
+import TALLY_REMOTE from 'dsh-tally/remote'
+
+export const inject = ['remote']
+
+export async function apply(ctx: Context) {
+  // 挂载后 ctx.remote.tally 才可用；插件卸载时命名空间随之撤回
+  await ctx.remote.$mount(TALLY_REMOTE)
+
+  ctx.inject(['remote.tally'], async (ctx) => {
+    const status = await ctx.remote.tally.status()
+    if (status.ok) console.log('价格目录版本', status.value.catalogVersion)
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const groups = await ctx.remote.tally.query({ from: today.getTime(), to: Date.now() + 1, groupBy: 'model' })
+    if (!groups.ok) console.warn(groups.error.code, groups.error.message)
+
+    // 断线自动重连的实时流；每个 hello 之后重新拉取数据
+    const stream = ctx.remote.$stream<TallyWatchFrame>({
+      name: 'tally',
+      open: (signal: AbortSignal) => ctx.remote.tally.watch(signal),
+      ended: () => new Error('tally stream ended'),
+    })
+    ctx.effect(() => () => stream.dispose(), 'tally watch')
+    for await (const item of stream) {
+      if (item.value.type === 'hello') { /* 重新拉取全部数据 */ }
+      item.accept()
+    }
+  })
+}
+```
+
+注意：
+
+- 页面所在插件的 `package.json` 中，`dsh.client.inject` 要包含 `remote`。
+- `dsh-tally/remote` 和 zod 必须打包进自己的 bundle：dsh 宿主只共享固定的几个模块（`react`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-ui-*` 等），别的模块在浏览器里无法 `require()`。
+- 每次调用返回 `RemoteResult`：成功为 `{ ok: true, value }`，失败为 `{ ok: false, error: { code, message } }`，`code` 见上文的错误代码表。
 
 ## 版本承诺
 

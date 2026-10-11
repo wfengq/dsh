@@ -1,26 +1,33 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chromium, type Browser, type Page } from 'playwright'
+import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startMockLlmServer, type MockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
 
 /**
- * Smoke test against the real DeepSeek Harness web profile: `dsh-tally` and `dsh-tally-ui` are
- * installed with `dsh plugin --profile web add <dir>` (the browser half only attaches to a
- * Loader row named by the bare package name), `dsh --profile web` serves the UI, and a real
- * Chromium checks that the browser bundle mounts the `tally` Remote namespace and renders the
- * session total in the session header and the cost dock below the composer.
+ * End-to-end acceptance against the real DeepSeek Harness web profile. `dsh-tally`,
+ * `dsh-tally-balance-deepseek` and `dsh-tally-ui` are installed with `dsh plugin --profile web add
+ * <dir>` (the browser half only attaches to a Loader row named by the bare package name), a
+ * `--patch` overlay points the balance plugin at a local stub, and `dsh --profile web` serves the
+ * UI to a real Chromium on loopback (so settings writes go to the Host document). The cases run in
+ * order on one page: conversation elements, balance, dashboard, settings (budget toast and the
+ * `turnTail` switch), then a reload. Every step leaves a screenshot in `screenshots/`.
  */
 
 const tallyDir = fileURLToPath(new URL('../../../tally/', import.meta.url))
+const balanceDir = fileURLToPath(new URL('../../../balance-deepseek/', import.meta.url))
 const tallyUiDir = fileURLToPath(new URL('../../', import.meta.url))
+const screenshotDir = fileURLToPath(new URL('./screenshots/', import.meta.url))
 const API_KEY = 'mock-key'
 const RUN_TIMEOUT = 120_000
 const READY_TIMEOUT = 90_000
+/** Longest wait for something a finished turn causes (recording, watch frame, render). */
+const TURN_TIMEOUT = 30_000
 
 /** The `dsh` bin of the installed CLI, run with this Node so no package-manager wrapper sits in between. */
 const dshBin = (() => {
@@ -88,17 +95,48 @@ function describeRun(r: { code?: number | null; stdout: string; stderr: string }
   return `exit ${r.code}\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`
 }
 
+/** The DeepSeek balance endpoint as the stub answers it: 110 CNY, or the status the test sets. */
+function balanceStub(state: { status: number; calls: number }): Server {
+  return createServer((req, res) => {
+    if (req.url !== '/user/balance') {
+      res.writeHead(404).end()
+      return
+    }
+    state.calls += 1
+    if (state.status !== 200) {
+      res.writeHead(state.status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { message: 'Authentication Fails', type: 'authentication_error' } }))
+      return
+    }
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({
+      is_available: true,
+      balance_infos: [{ currency: 'CNY', total_balance: '110.00', granted_balance: '10.00', topped_up_balance: '100.00' }],
+    }))
+  })
+}
+
 describe('dsh-tally-ui in the real dsh web profile', () => {
   let home: string
   let server: MockLlmServer
+  let stub: Server
+  const stubState = { status: 200, calls: 0 }
   let env: NodeJS.ProcessEnv
   let web: ReturnType<typeof start>
   let url: string
   let browser: Browser
+  let page: Page
+  const consoleErrors: string[] = []
 
   beforeAll(async () => {
+    rmSync(screenshotDir, { recursive: true, force: true })
+    mkdirSync(screenshotDir, { recursive: true })
     home = mkdtempSync(join(tmpdir(), 'dsh-tally-ui-e2e-'))
     server = await startMockLlmServer({ port: 0, apiKey: API_KEY, sequence: ['success'], repeatLast: true })
+    stub = balanceStub(stubState)
+    await new Promise<void>(resolve => stub.listen(0, '127.0.0.1', resolve))
+    const address = stub.address()
+    if (address === null || typeof address === 'string') throw new Error('balance stub has no port')
     env = {
       ...baseEnv(),
       DSH_HOME: home,
@@ -106,13 +144,16 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
       DEEPSEEK_API_KEY: API_KEY,
     }
 
-    for (const dir of [tallyDir, tallyUiDir]) {
+    for (const dir of [tallyDir, balanceDir, tallyUiDir]) {
       const add = await run(process.execPath, [dshBin, 'plugin', '--profile', 'web', 'add', dir], env, home)
       expect(add.code, describeRun(add)).toBe(0)
     }
+    // The overlay replaces the config of the installed balance row (bare name kept), pointing it at the stub.
+    const overlay = join(home, 'overlay-balance.yml')
+    writeFileSync(overlay, `- id: tally-balance-deepseek\n  config:\n    baseURL: http://127.0.0.1:${address.port}\n`)
 
-    // A new client bundle is only picked up at startup, so dsh starts after both installs.
-    web = start(process.execPath, [dshBin, '--profile', 'web', '--no-open', '--port', '0'], env, home)
+    // A new client bundle is only picked up at startup, so dsh starts after all installs.
+    web = start(process.execPath, [dshBin, '--profile', 'web', '--patch', overlay, '--no-open', '--port', '0'], env, home)
     url = await new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`dsh web not ready in ${READY_TIMEOUT}ms\n${describeRun(web.output)}`)), READY_TIMEOUT)
       const check = () => {
@@ -130,6 +171,9 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
       check()
     })
     browser = await chromium.launch()
+    page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, locale: 'en-US', acceptDownloads: true })
+    page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()) })
+    page.on('pageerror', (error) => { consoleErrors.push(error.message) })
   })
 
   afterAll(async () => {
@@ -137,11 +181,18 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     for (const child of children) killGroup(child)
     children.clear()
     await server?.close()
+    stub?.closeAllConnections()
+    await new Promise<void>(resolve => stub ? stub.close(() => resolve()) : resolve())
     if (home) rmSync(home, { recursive: true, force: true })
   })
 
+  const shot = (name: string) => page.screenshot({ path: join(screenshotDir, `${name}.png`) })
+  const tally = (name: string) => page.locator(`[data-tally="${name}"]`)
+  const dockItem = (name: string) => tally('dock').locator(`[data-tally="${name}"]`)
+  const finishedTurns = () => page.locator('[data-turn-tail]').count()
+
   /** Connect a fresh workspace directory through the picker of the blank session. */
-  async function connectWorkspace(page: Page): Promise<void> {
+  async function connectWorkspace(): Promise<void> {
     const workspace = join(home, 'workspace')
     mkdirSync(workspace, { recursive: true })
     await page.getByRole('textbox', { name: 'Choose workspace' }).click()
@@ -153,24 +204,148 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     await dialog.getByRole('button', { name: 'Open', exact: true }).click()
   }
 
-  it('mounts the tally namespace and shows the session total and the cost dock in a new session', async () => {
-    const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, locale: 'en-US' })
-    const consoleErrors: string[] = []
-    page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()) })
-    page.on('pageerror', (error) => { consoleErrors.push(error.message) })
-
-    await page.goto(url)
-    await page.getByRole('dialog', { name: 'Preview Notice' }).getByRole('button', { name: 'Continue' }).click()
-    await connectWorkspace(page)
-    // The blank session only becomes a session (with its header) once its first message is sent.
+  /** Sends a message and waits until its turn has finished (one more turn tail, nothing streaming). */
+  async function sendAndFinish(text: string): Promise<void> {
+    const before = await finishedTurns()
     const composer = page.locator('[data-composer-input][contenteditable="true"]')
     await composer.click()
-    await page.keyboard.type('say hi')
+    await page.keyboard.type(text)
     await page.keyboard.press('Enter')
+    await expect.poll(finishedTurns, { timeout: TURN_TIMEOUT }).toBeGreaterThan(before)
+    await expect.poll(() => page.locator('[data-streaming="true"]').count(), { timeout: TURN_TIMEOUT }).toBe(0)
+  }
 
-    await page.locator('[data-tally="total"]').waitFor({ timeout: 30_000 })
-    await page.locator('[data-tally="dock"] [data-tally="today"]').waitFor({ timeout: 30_000 })
+  /** Opens the settings dialog on the tally section. */
+  async function openTallySettings(): Promise<Locator> {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await dialog.getByRole('button', { name: 'Usage and cost' }).click()
+    await dialog.locator('[data-tally="settings"]').waitFor({ timeout: 10_000 })
+    return dialog
+  }
 
+  async function closeSettings(): Promise<void> {
+    await page.keyboard.press('Escape')
+    await page.getByRole('dialog', { name: 'Settings' }).waitFor({ state: 'detached', timeout: 10_000 })
+  }
+
+  /** The values of the cost dock that must survive a reconnect (the band countdown ticks, so it is left out). */
+  async function dockValues(): Promise<Record<string, string>> {
+    const read = async (name: string) => (await dockItem(name).count()) === 0 ? '<absent>' : await dockItem(name).innerText()
+    return { session: await read('session'), today: await read('today'), balance: await read('balance') }
+  }
+
+  it('shows a priced session cost, the turn cost with its hit rate and the session total after a mocked turn', async () => {
+    await page.goto(url)
+    await page.getByRole('dialog', { name: 'Preview Notice' }).getByRole('button', { name: 'Continue' }).click()
+    await connectWorkspace()
+    // The blank session only becomes a session (with its header) once its first message is sent.
+    await sendAndFinish('say hi')
+
+    await tally('turn').first().waitFor({ timeout: TURN_TIMEOUT })
+    const session = dockItem('session').locator('.dsh-tally-num')
+    await session.waitFor({ timeout: TURN_TIMEOUT })
+    // The mocked usage is priced (route deepseek-official, model deepseek-flash): neither unpriced nor zero.
+    const cost = await session.innerText()
+    expect(cost).toMatch(/¥/)
+    expect(cost).not.toContain('Unpriced')
+    expect(cost).not.toBe('¥0')
+    expect(await tally('total').innerText()).not.toBe('—')
+    await shot('01-conversation')
+
+    await tally('turn').first().hover()
+    const details = page.locator('.dsh-tally-turn-details')
+    await details.waitFor({ state: 'visible', timeout: 10_000 })
+    expect(await details.innerText()).toMatch(/Hit rate\s+\d+%/)
+    await shot('02-turn-details')
+    await page.mouse.move(0, 0)
+  })
+
+  it('shows the stub balance, and after a refused refresh keeps it marked as stale', async () => {
+    const balance = tally('balance')
+    await expect.poll(() => balance.innerText(), { timeout: TURN_TIMEOUT }).toContain('¥110')
+    expect(await balance.locator('.dsh-tally-balance-stale').count()).toBe(0)
+    await shot('03-balance')
+
+    stubState.status = 401
+    const calls = stubState.calls
+    await balance.click()
+    await expect.poll(() => stubState.calls, { timeout: 10_000 }).toBeGreaterThan(calls)
+    await balance.locator('.dsh-tally-balance-stale').waitFor({ timeout: 15_000 })
+    expect(await balance.innerText()).toContain('¥110')
+    await shot('04-balance-stale')
+  })
+
+  it('opens the usage dashboard from the right sidebar, draws the daily bars and exports a CSV', async () => {
+    await page.locator('[data-sidebar-right-expand]').click()
+    await page.locator('[data-sidebar-right-guide-entry="tally.dashboard"]').click()
+    const chart = tally('daily-chart')
+    await chart.waitFor({ timeout: 15_000 })
+    await expect.poll(() => chart.locator('rect.dsh-tally-bar-peak, rect.dsh-tally-bar-offpeak').count()).toBeGreaterThan(0)
+    await shot('05-dashboard')
+
+    const download = page.waitForEvent('download', { timeout: 15_000 })
+    await tally('export').click()
+    const file = await download
+    expect(file.suggestedFilename()).toMatch(/^tally-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv$/)
+    const csv = readFileSync(await file.path(), 'utf8').trim().split('\n')
+    expect(csv[0]).toMatch(/^time,session,/)
+    expect(csv.length).toBeGreaterThan(1)
+  })
+
+  it('raises a budget toast in the overlay once a tiny daily budget is exceeded', async () => {
+    const dialog = await openTallySettings()
+    const budgets = dialog.locator('[data-tally="budgets"]')
+    await budgets.getByRole('textbox', { name: 'Amount' }).fill('0.000001')
+    await budgets.getByRole('button', { name: 'Add budget' }).click()
+    await budgets.getByText(/^Daily · All workspaces · /).waitFor({ timeout: 10_000 })
+    await shot('06-settings-budget')
+    await closeSettings()
+
+    const toast = page.getByRole('alert').filter({ hasText: /Budget ".+" is (80% used|used up)/ })
+    const shown = toast.first().waitFor({ timeout: TURN_TIMEOUT })
+    await sendAndFinish('say hi again')
+    await shown
+    await shot('07-budget-toast')
+  })
+
+  it('hides the turn cost on new turns once the turnTail switch is off', async () => {
+    expect(await tally('turn').count()).toBeGreaterThan(0)
+    const dialog = await openTallySettings()
+    const toggle = dialog.locator('[data-tally="elements"]').getByRole('switch', { name: 'Cost of each turn' })
+    expect(await toggle.isDisabled()).toBe(false)
+    await toggle.click()
+    await expect.poll(() => toggle.getAttribute('aria-checked'), { timeout: 10_000 }).toBe('false')
+    expect(await dialog.locator('[data-tally="elements"] [role="alert"]').count()).toBe(0)
+    await shot('08-settings-elements')
+    await closeSettings()
+
+    await sendAndFinish('one more turn')
+    // A turn cost renders once the turn's entries are recorded and announced, well within a second
+    // of the turn's end when the switch is on (see the first case); give it a margin to show up.
+    await page.waitForTimeout(3000)
+    expect(await tally('turn').count()).toBe(0)
+    await shot('09-turn-tail-off')
+  })
+
+  it('shows the same cost dock values after a page reload', async () => {
+    // Let the last turn's frames settle: the values must read the same twice in a row.
+    let before = await dockValues()
+    await expect.poll(async () => {
+      const next = await dockValues()
+      const stable = JSON.stringify(next) === JSON.stringify(before)
+      before = next
+      return stable
+    }, { timeout: TURN_TIMEOUT, intervals: [1000] }).toBe(true)
+    expect(before.session).not.toBe('<absent>')
+
+    await page.reload()
+    await dockItem('session').waitFor({ timeout: TURN_TIMEOUT })
+    await expect.poll(dockValues, { timeout: TURN_TIMEOUT }).toEqual(before)
+    await shot('10-after-reload')
+  })
+
+  it('logged no console errors and dsh printed no warnings or import failures', () => {
     expect(consoleErrors).toEqual([])
     expect(web.output.stderr, describeRun(web.output)).not.toContain('ExperimentalWarning')
     expect(web.output.stderr, describeRun(web.output)).not.toContain('failed to import')

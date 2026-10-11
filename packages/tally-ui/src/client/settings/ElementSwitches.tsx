@@ -17,7 +17,7 @@ export function ElementSwitches({ form, t }: { form: ElementsFace; t: T }): Reac
   const toggle = async (name: ElementName, next: boolean) => {
     setPending(name)
     setFailed(false)
-    const accepted = await writeField(form, `elements.${name}`, next)
+    const accepted = await writeField(form, ['elements', name], next)
     setPending(null)
     if (!accepted) setFailed(true)
   }

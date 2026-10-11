@@ -11,9 +11,13 @@ import { auditPlugin, classifyRedLine, collectPlugin, type AuditReport } from 'd
 
 const packageDir = (name: string) => fileURLToPath(new URL(`../packages/${name}/`, import.meta.url))
 
-function audit(name: string): AuditReport {
+function collect(name: string) {
   const dir = packageDir(name)
-  return auditPlugin(collectPlugin(dir, 'file:' + dir))
+  return collectPlugin(dir, 'file:' + dir)
+}
+
+function audit(name: string): AuditReport {
+  return auditPlugin(collect(name))
 }
 
 describe('dsh-trust-check capability gate', () => {
@@ -26,6 +30,11 @@ describe('dsh-trust-check capability gate', () => {
       expect(report.capabilities).not.toContain('network')
     })
   }
+
+  it('tally-ui is audited together with its browser bundle', () => {
+    // The browser half must not reach the network either: it only talks to the same-origin Remote API.
+    expect(Object.keys(collect('tally-ui').sources)).toEqual(expect.arrayContaining(['lib/index.js', 'lib/client.js']))
+  })
 
   it('balance-deepseek only has the creds-network red line', () => {
     const report = audit('balance-deepseek')
