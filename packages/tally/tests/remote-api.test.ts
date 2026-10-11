@@ -371,6 +371,13 @@ describe('tally Remote API', () => {
       ['exportCsv with from after to', 'exportCsv', { from: T0 + 1, to: T0, tz: 'UTC' }],
       ['exportCsv with an unknown time zone', 'exportCsv', { ...base, tz: 'Mars/Base' }],
       ['exportCsv with a long time zone', 'exportCsv', { ...base, tz: longText }],
+      ['query from beyond the Date range', 'query', { from: 1e16, to: 1e16 + DAY, groupBy: 'day' }],
+      ['query to beyond the Date range', 'query', { from: -1e16 - DAY, to: -1e16, groupBy: 'day' }],
+      ['query with a fractional from', 'query', { from: T0 + 0.5, to: T0 + DAY, groupBy: 'day' }],
+      ['band at a time beyond the Date range', 'band', { route: 'r', model: 'm', at: 1e16 }],
+      ['band at a fractional time', 'band', { route: 'r', model: 'm', at: T0 + 0.5 }],
+      ['peakSavings beyond the Date range', 'peakSavings', { from: 1e16, to: 1e16 + DAY }],
+      ['exportCsv beyond the Date range', 'exportCsv', { from: 1e16, to: 1e16 + DAY, tz: 'UTC' }],
     ]
 
     it.each(cases)('rejects %s with gateway/bad-request', async (_name, method, request) => {

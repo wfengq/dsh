@@ -61,7 +61,7 @@ function parseData(raw: unknown): BudgetFileData {
     if (errors.length > 0) throw new Error(`invalid budget: ${errors.join('; ')}`)
     budgets.push(structuredClone(b as Budget))
   }
-  const fired: Record<string, FiredRecord> = {}
+  const fired = firedMap()
   if (raw.fired !== undefined) {
     if (!isRecord(raw.fired)) throw new Error('fired must be an object')
     for (const [id, rec] of Object.entries(raw.fired)) {
@@ -93,7 +93,29 @@ interface DiskState {
 }
 
 function emptyData(): BudgetFileData {
-  return { version: 1, budgets: [], fired: {} }
+  return { version: 1, budgets: [], fired: firedMap() }
+}
+
+/**
+ * Alert records keyed by budget id. The map has no prototype, so ids such as `toString` or
+ * `__proto__` are plain keys; every lookup still goes through `Object.hasOwn`.
+ */
+function firedMap(): Record<string, FiredRecord> {
+  return Object.create(null) as Record<string, FiredRecord>
+}
+
+function firedOf(data: BudgetFileData, budgetId: string): FiredRecord | undefined {
+  return Object.hasOwn(data.fired, budgetId) ? data.fired[budgetId] : undefined
+}
+
+/** A deep copy that keeps `fired` prototype-free (`structuredClone` would give it `Object.prototype`). */
+function cloneData(data: BudgetFileData): BudgetFileData {
+  const fired = firedMap()
+  for (const id of Object.keys(data.fired)) {
+    const rec = data.fired[id]!
+    fired[id] = { periodStart: rec.periodStart, thresholds: [...rec.thresholds] }
+  }
+  return { version: 1, budgets: structuredClone(data.budgets), fired }
 }
 
 function signatureOf(path: string): Signature | undefined {
@@ -191,14 +213,14 @@ export class BudgetFile {
 
   fired(budgetId: string, periodStart: number): Threshold[] {
     this.reloadIfChanged()
-    const rec = this.data.fired[budgetId]
+    const rec = firedOf(this.data, budgetId)
     return rec && rec.periodStart === periodStart ? [...rec.thresholds] : []
   }
 
   /** Start of the period the budget's alerts were last recorded for, if any alert was ever recorded. */
   lastFiredPeriod(budgetId: string): number | undefined {
     this.reloadIfChanged()
-    return this.data.fired[budgetId]?.periodStart
+    return firedOf(this.data, budgetId)?.periodStart
   }
 
   /**
@@ -209,7 +231,7 @@ export class BudgetFile {
   async markFired(budgetId: string, periodStart: number, t: Threshold): Promise<boolean> {
     return this.update((data) => {
       if (!data.budgets.some((b) => b.id === budgetId)) return false
-      const rec = data.fired[budgetId]
+      const rec = firedOf(data, budgetId)
       if (rec === undefined || rec.periodStart < periodStart) {
         data.fired[budgetId] = { periodStart, thresholds: [t] }
         return true
@@ -231,8 +253,12 @@ export class BudgetFile {
     try {
       const state = readDisk(this.path, false)
       this.signature = state.signature
-      if (state.loadError !== undefined) this.loadError = state.loadError
-      else this.data = state.data // a corrupt file keeps the last good state until a writer replaces it
+      if (state.loadError !== undefined) {
+        this.loadError = state.loadError // a corrupt file keeps the last good state until a writer replaces it
+      } else {
+        this.data = state.data
+        this.loadError = undefined // the file is readable again: the problem is gone
+      }
     } catch {
       // keep the previous state; the next read or write tries again
     }
@@ -254,7 +280,7 @@ export class BudgetFile {
     return withFileLock(this.path, async () => {
       const state = readDisk(this.path, true)
       if (state.loadError !== undefined) this.loadError = state.loadError
-      const next = structuredClone(state.data)
+      const next = cloneData(state.data)
       const changed = mutate(next)
       if (!changed) {
         this.data = state.data
@@ -264,6 +290,8 @@ export class BudgetFile {
       await writeFileAtomic(this.path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, dirMode: 0o700 })
       this.data = next
       this.signature = signatureOf(this.path)
+      // A good file is on disk now (any corrupt one was moved aside above).
+      this.loadError = undefined
       return true
     }, {})
   }

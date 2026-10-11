@@ -130,6 +130,41 @@ describe('BudgetFile', () => {
     expect(file.budgets()).toEqual([monthly])
   })
 
+  it.each(['toString', '__proto__', 'constructor', 'hasOwnProperty'])('keeps alert records of a budget with the id %s', async (id) => {
+    const file = BudgetFile.load(path)
+    await file.put({ ...monthly, id })
+    expect(file.fired(id, 1000)).toEqual([])
+    expect(file.lastFiredPeriod(id)).toBeUndefined()
+    expect(await file.markFired(id, 1000, 0.8)).toBe(true)
+    expect(await file.markFired(id, 1000, 0.8)).toBe(false)
+    expect(await file.markFired(id, 1000, 1)).toBe(true)
+    expect(file.fired(id, 1000)).toEqual([0.8, 1])
+    const reloaded = BudgetFile.load(path)
+    expect(reloaded.fired(id, 1000)).toEqual([0.8, 1])
+    expect(reloaded.lastFiredPeriod(id)).toBe(1000)
+    expect(JSON.parse(readFileSync(path, 'utf8')).fired).toHaveProperty([id])
+    expect(await reloaded.delete(id)).toBe(true)
+    expect(BudgetFile.load(path).fired(id, 1000)).toEqual([])
+  })
+
+  it('clears the load error once a write replaced the corrupt file', async () => {
+    writeFileSync(path, '{ not json')
+    const file = BudgetFile.load(path)
+    expect(file.loadError).toBeTruthy()
+    await file.put(monthly)
+    expect(file.loadError).toBeUndefined()
+  })
+
+  it('clears the load error once another process fixed the file', async () => {
+    writeFileSync(path, '{ not json')
+    const file = BudgetFile.load(path)
+    expect(file.loadError).toBeTruthy()
+    await BudgetFile.load(join(dir, 'other.json')).put(monthly)
+    writeFileSync(path, readFileSync(join(dir, 'other.json'), 'utf8') + '\n')
+    expect(file.budgets()).toEqual([monthly])
+    expect(file.loadError).toBeUndefined()
+  })
+
   it('leaves no temp files after writing', async () => {
     const file = BudgetFile.load(path)
     await file.put(monthly)

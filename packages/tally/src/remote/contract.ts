@@ -37,7 +37,13 @@ function isTimeZone(value: string): boolean {
 
 const timeZone = text.refine(isTimeZone, { message: 'unknown IANA time zone' })
 
-const range = { from: z.number(), to: z.number() }
+/** Largest magnitude a JavaScript `Date` accepts, epoch milliseconds. */
+const MAX_EPOCH_MS = 8.64e15
+
+/** An epoch-millisecond timestamp: an integer a `Date` can hold. */
+const epochMs = z.number().int().min(-MAX_EPOCH_MS).max(MAX_EPOCH_MS)
+
+const range = { from: epochMs, to: epochMs }
 
 /** Requires `from < to` and a span of at most 400 days; `from` and `to` are epoch milliseconds. */
 function checkRange(r: { from: number; to: number }, ctx: z.RefinementCtx): void {
@@ -220,7 +226,7 @@ export const schemas = {
       .refine(r => r.fromSeq <= r.toSeq, { message: 'fromSeq must not exceed toSeq', path: ['fromSeq'] }),
     result: turnUsage,
   },
-  band: { request: z.object({ route: text, model: text, at: z.number() }), result: bandView.nullable() },
+  band: { request: z.object({ route: text, model: text, at: epochMs }), result: bandView.nullable() },
   balance: { request: routeRequest, result: balanceSnapshot.nullable() },
   refreshBalance: { request: routeRequest, result: balanceSnapshot.nullable() },
   budgets: { request: z.undefined(), result: z.array(budget) },
@@ -343,6 +349,29 @@ export const TALLY_REMOTE: TypertRemoteContribution = {
     descriptorOf('rebuild', false),
     descriptorOf('watch', false, { result: 'dsh-tally-api#TallyWatchFrame' }, true),
   ],
+}
+
+/** The part of a browser plugin context `mountTallyRemote` needs (`ctx.remote` of `dsh-api-remotes`). */
+export interface TallyRemoteMountTarget {
+  remote: { $mount(contribution: TypertRemoteContribution): unknown }
+}
+
+const ALREADY_MOUNTED = `Remote package "${PACKAGE}" is already registered`
+
+/**
+ * Mounts the `tally` namespace on `ctx.remote`, tolerating another client plugin that mounted it
+ * first (the Client Remote accepts each package once and throws for the second `$mount`). Resolves
+ * `true` when this call mounted it (it is withdrawn when `ctx` is disposed) and `false` when it was
+ * already there (it then lives as long as the plugin that mounted it). Any other failure rejects.
+ */
+export async function mountTallyRemote(ctx: TallyRemoteMountTarget): Promise<boolean> {
+  try {
+    await ctx.remote.$mount(TALLY_REMOTE)
+    return true
+  } catch (error) {
+    if (error instanceof Error && error.message.includes(ALREADY_MOUNTED)) return false
+    throw error
+  }
 }
 
 export default TALLY_REMOTE

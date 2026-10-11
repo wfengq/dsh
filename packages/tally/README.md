@@ -242,34 +242,54 @@ export function apply(ctx: Context) {
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type { TallyWatchFrame } from 'dsh-tally-api'
-import TALLY_REMOTE from 'dsh-tally/remote'
+import { mountTallyRemote } from 'dsh-tally/remote'
 
 export const inject = ['remote']
 
 export async function apply(ctx: Context) {
-  // 挂载后 ctx.remote.tally 才可用；插件卸载时命名空间随之撤回
-  await ctx.remote.$mount(TALLY_REMOTE)
+  // 挂载后 ctx.remote.tally 才可用；插件卸载时命名空间随之撤回。
+  // 其他插件（例如 dsh-tally-ui）可能已经挂载过，mountTallyRemote 把这种情况当作成功。
+  await mountTallyRemote(ctx)
 
-  ctx.inject(['remote.tally'], async (ctx) => {
-    const status = await ctx.remote.tally.status()
-    if (status.ok) console.log('价格目录版本', status.value.catalogVersion)
+  ctx.inject(['remote.tally'], (ctx) => {
+    const tally = ctx.remote.tally
 
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const groups = await ctx.remote.tally.query({ from: today.getTime(), to: Date.now() + 1, groupBy: 'model' })
-    if (!groups.ok) console.warn(groups.error.code, groups.error.message)
+    async function reloadAll() {
+      const status = await tally.status()
+      if (status.ok) console.log('价格目录版本', status.value.catalogVersion)
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const groups = await tally.query({ from: today.getTime(), to: Date.now() + 1, groupBy: 'model' })
+      if (!groups.ok) console.warn(groups.error.code, groups.error.message)
+    }
 
-    // 断线自动重连的实时流；每个 hello 之后重新拉取数据
+    // 断线自动重连的实时流。在独立的循环里消费，不要在 inject 回调里 for await：
+    // 回调要立即返回，流的生命周期交给 AbortController 和 ctx.effect。
     const stream = ctx.remote.$stream<TallyWatchFrame>({
       name: 'tally',
-      open: (signal: AbortSignal) => ctx.remote.tally.watch(signal),
+      open: (signal: AbortSignal) => tally.watch(signal),
       ended: () => new Error('tally stream ended'),
     })
-    ctx.effect(() => () => stream.dispose(), 'tally watch')
-    for await (const item of stream) {
-      if (item.value.type === 'hello') { /* 重新拉取全部数据 */ }
-      item.accept()
-    }
+    const abort = new AbortController()
+    ctx.effect(() => () => {
+      abort.abort()
+      return stream.dispose()
+    }, 'tally watch')
+
+    void (async () => {
+      try {
+        for await (const item of stream) {
+          if (abort.signal.aborted) return
+          const frame = item.value
+          if (frame.type === 'hello') await reloadAll() // 每个 hello 之后重新拉取全部数据
+          else if (frame.type === 'recorded') { /* 防抖后重新拉取 */ }
+          // 其他帧类型（包括以后新增的）按需处理，不认识的直接忽略
+          item.accept()
+        }
+      } catch (error) {
+        if (!abort.signal.aborted) console.warn('tally stream failed', error)
+      }
+    })()
   })
 }
 ```
@@ -279,6 +299,9 @@ export async function apply(ctx: Context) {
 - 页面所在插件的 `package.json` 中，`dsh.client.inject` 要包含 `remote`。
 - `dsh-tally/remote` 和 zod 必须打包进自己的 bundle：dsh 宿主只共享固定的几个模块（`react`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-ui-*` 等），别的模块在浏览器里无法 `require()`。
 - 每次调用返回 `RemoteResult`：成功为 `{ ok: true, value }`，失败为 `{ ok: false, error: { code, message } }`，`code` 见上文的错误代码表。
+- `mountTallyRemote(ctx)` 返回 `true` 表示由本插件挂载（随本插件卸载而撤回），返回 `false` 表示已由其他插件挂载（命名空间随那个插件卸载而撤回，此时 `ctx.inject(['remote.tally'], …)` 的回调会随之停止）。除“已挂载”以外的错误照常抛出。
+- 时间字段（`from`、`to`、`at`）必须是 `Date` 能表示的整数毫秒（绝对值不超过 8.64e15），否则返回 `gateway/bad-request`。
+- **向前兼容**：以后的次版本可能给枚举字段增加新值、给 `watch` 流增加新的帧类型。客户端遇到不认识的帧类型必须忽略（照常 `accept()`），不能报错或断开。注意：把旧版 `dsh-tally/remote` 打包进自己 bundle 的客户端用的是旧的严格编解码器，遇到新的帧类型或枚举值会解码失败；需要随 `dsh-tally` 升级重新打包。
 
 ## 版本承诺
 
