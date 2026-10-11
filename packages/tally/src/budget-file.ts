@@ -113,6 +113,8 @@ export class BudgetFile {
   }
 
   put(b: Budget): void {
+    const errors = validateBudget(b)
+    if (errors.length > 0) throw new Error(`tally: invalid budget: ${errors.join('; ')}`)
     const copy = structuredClone(b)
     const i = this.data.budgets.findIndex((x) => x.id === b.id)
     if (i >= 0) this.data.budgets[i] = copy

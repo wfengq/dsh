@@ -3,10 +3,12 @@ import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import Schema from '@deepseek-ai/schemastery'
 import type { ProviderPriceOverride } from 'dsh-tally-api'
 import { TallyBalance } from './balance-service.js'
+import { TallyBudget } from './budget-service.js'
 import { TallyPricingService } from './pricing-service.js'
 import { TallyUsage } from './usage-service.js'
 
 export { TallyBalance, type TallyBalanceConfig } from './balance-service.js'
+export { TallyBudget, type TallyBudgetConfig } from './budget-service.js'
 export { Recorder, type SessionHeaderLike } from './recorder.js'
 export { TallyPricing, TallyPricingService, type TallyPricingOptions } from './pricing-service.js'
 export { TallyUsage, type TallyUsageConfig } from './usage-service.js'
@@ -27,6 +29,10 @@ export interface Config {
   balanceMinIntervalMs: number
   /** A balance request still pending after this long is aborted. */
   balanceTimeoutMs: number
+  /** Budget file; defaults to `$DSH_HOME/tally/budgets.json`. */
+  budgetPath?: string
+  /** IANA time zone of budget periods; defaults to the host time zone. */
+  timeZone?: string
 }
 
 const Rates = Schema.object({
@@ -63,6 +69,8 @@ export const Config: Schema<Config> = Schema.object({
   balanceDebounceMs: Schema.natural().default(3000).description('记账后刷新余额前的去抖时间（毫秒）'),
   balanceMinIntervalMs: Schema.natural().default(60000).description('同一路由两次自动刷新余额之间的最小间隔（毫秒）'),
   balanceTimeoutMs: Schema.natural().min(1).default(10000).description('余额请求的超时时间（毫秒）'),
+  budgetPath: Schema.string().description('预算文件路径，默认 $DSH_HOME/tally/budgets.json'),
+  timeZone: Schema.string().description('预算按日、按月统计时使用的 IANA 时区，默认取宿主时区'),
 })
 
 export function apply(ctx: Context, config: Config) {
@@ -71,6 +79,10 @@ export function apply(ctx: Context, config: Config) {
     debounceMs: config.balanceDebounceMs,
     minIntervalMs: config.balanceMinIntervalMs,
     timeoutMs: config.balanceTimeoutMs,
+  })
+  ctx.plugin(TallyBudget, {
+    path: config.budgetPath ?? dshHomePath('tally', 'budgets.json'),
+    timeZone: config.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
   })
   ctx.plugin(TallyUsage, {
     // Resolved at startup rather than import time so a `DSH_HOME` set by the host applies.

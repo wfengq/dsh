@@ -108,6 +108,16 @@ describe('BudgetFile', () => {
     expect(readdirSync(dir).some((n) => n.includes('.corrupt-'))).toBe(true)
   })
 
+  it('rejects an invalid budget in put without touching the file', () => {
+    const file = BudgetFile.load(path)
+    file.put(monthly)
+    const before = readFileSync(path, 'utf8')
+    expect(() => file.put({ ...monthly, limit: { amount: '0', currency: 'CNY' } })).toThrow(/^tally: invalid budget: .+/)
+    expect(() => file.put({ ...monthly, period: 'week' } as unknown as Budget)).toThrow('tally: invalid budget: ')
+    expect(readFileSync(path, 'utf8')).toBe(before)
+    expect(file.budgets()).toEqual([monthly])
+  })
+
   it('leaves no temp files after writing', () => {
     const file = BudgetFile.load(path)
     file.put(monthly)
