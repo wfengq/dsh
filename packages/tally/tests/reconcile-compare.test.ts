@@ -88,3 +88,28 @@ describe('compare', () => {
     expect(r.totals.find(t => t.currency === 'CNY')!.outOfTolerance).toBeGreaterThan(0)
   })
 })
+
+describe('final review fixes: compare and ledger', () => {
+  it('lists a day×model the ledger could not price even when the bill has no such line', () => {
+    const r = compare(ledgerDaily({ dbPath, from: '2026-10-14', to: '2026-10-15', tz: 'Asia/Shanghai' }), [bill('2026-10-14', 'deepseek-flash', '3')])
+    const unknown = r.rows.find(x => x.day === '2026-10-15')!
+    expect(unknown).toMatchObject({ currency: null, ours: null, bill: null, withinTolerance: false })
+    expect(unknown.hints).toEqual(['unknownUsage:1', 'missingInBill'])
+    expect(r.unexplained).toEqual({ unpricedCount: 1, unknownUsageCount: 1 })
+  })
+
+  it('reconciles catalog aliases under their canonical model', () => {
+    const store = TallyStore.open(dbPath)
+    store.upsertEntry(entry('s2:1', sh('2026-10-16T15:00:00'), 'deepseek-official', 'deepseek-v4-flash'))
+    store.upsertEntry(entry('s2:2', sh('2026-10-16T15:00:00'), 'deepseek-official', 'deepseek-v4-flash-vision-exp'))
+    store.upsertEntry(entry('s2:3', sh('2026-10-16T15:00:00'), 'deepseek-official', 'deepseek-flash'))
+    store.close()
+    const days = ledgerDaily({ dbPath, from: '2026-10-16', to: '2026-10-16', tz: 'Asia/Shanghai' })
+    expect(days).toEqual([expect.objectContaining({ model: 'deepseek-flash', amount: '6', requestCount: 3 })])
+  })
+
+  it('prices custom routes through the given route mapping', () => {
+    const days = ledgerDaily({ dbPath, from: '2026-10-14', to: '2026-10-14', tz: 'Asia/Shanghai', providerRoutes: { foo: 'deepseek', 'deepseek-official': 'deepseek', 'deepseek-account': 'deepseek' } })
+    expect(days.find(d => d.model === 'deepseek-flash')).toMatchObject({ amount: '5', unpricedCount: 0 })
+  })
+})

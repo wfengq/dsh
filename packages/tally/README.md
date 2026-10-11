@@ -332,12 +332,18 @@ dsh-tally reconcile --bill ./bill.csv --format csv
 | `--currency <币种>` | 账单没有币种列时使用的币种 |
 | `--column <列=列名>` | 指定列名，可重复使用。默认识别 日期/date、模型/model、金额/费用/amount/cost、币种/currency |
 | `--model-map <a=b>` | 把账单里的模型名 a 当作 b，例如 `deepseek-chat=deepseek-flash` |
+| `--route <路由=厂商>` | 追加路由映射，可重复使用。默认已包含 `deepseek-official` 和 `deepseek-account` → `deepseek`；如果你在插件配置里改过 `providerRoutes`，这里要传同样的映射 |
+| `--overrides <文件>` | 价格覆盖配置文件（JSON 数组，格式与插件配置中的 `overrides` 相同），让对账和界面上的金额一致 |
 | `--tolerance <比例>` | 容差，默认 `0.01`（1%），依据设计文档的准确性标准 |
 | `--json` | 输出 JSON（字段名为英文） |
 
 通用 CSV 解析器能处理 UTF-8 BOM、中文表头、带引号的字段、千分位金额和货币符号。无法解析的行不会被静默丢弃，报告里会列出它们的行号和原因。
 
-**退出码**：0 表示全部在容差内；1 表示有超出容差的行；2 表示参数或文件错误。
+账本中的模型名会按价格数据里的别名归并，例如 `deepseek-v4-flash` 计入 `deepseek-flash`。账本里完全无法计价的“天 × 模型”（全部未定价或用量未知）也会单独列出，不会被漏掉；汇总里会给出未计入金额的请求数。
+
+**退出码**：0 表示全部在容差内；1 表示有超出容差的行，或者账单中有无法解析的行；2 表示参数或文件错误。
+
+`dsh plugin add` 不会把命令加入 PATH。在插件安装目录下可以用 `node <dsh-tally 安装目录>/lib/cli.js reconcile …` 运行；发布到 npm 后也可以用 `npx dsh-tally reconcile …`。
 
 **超出容差时的提示**：
 

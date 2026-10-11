@@ -61,3 +61,17 @@ describe('bill parser registry', () => {
     expect(() => pickBillParser('x', 'nope')).toThrow(/nope/)
   })
 })
+
+describe('final review fixes: bill parsing', () => {
+  it('reports the physical line of a bad record after blank lines and multi-line fields', () => {
+    const r = genericCsv.parse('日期,模型,金额,币种\n\n2026-10-09,a,x,CNY\n2026-10-09,"b\nc",1,CNY\n2026-10-09,d,y,CNY\n', {})
+    expect(r.skipped.map(s => s.line)).toEqual([3, 6])
+    expect(r.rows[0]!.line).toBe(4)
+  })
+
+  it('rejects badly grouped thousands instead of reading "1,2" as 12', () => {
+    const r = genericCsv.parse('日期,模型,金额,币种\n2026-10-09,a,"1,2",CNY\n2026-10-09,b,"12,345.6",CNY\n', {})
+    expect(r.skipped.map(s => s.line)).toEqual([2])
+    expect(r.rows[0]!.amount).toBe('12345.6')
+  })
+})

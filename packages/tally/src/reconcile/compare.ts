@@ -6,7 +6,8 @@ import type { LedgerDay } from './ledger.js'
 export interface ReconcileRow {
   day: string
   model: string
-  currency: Currency
+  /** `null` for a ledger line that priced nothing and has no bill counterpart. */
+  currency: Currency | null
   ours: string | null
   bill: string | null
   /** `ours − bill`, a missing side counting as 0. */
@@ -29,6 +30,8 @@ export interface ReconcileReport {
   tolerance: string
   rows: ReconcileRow[]
   totals: ReconcileTotal[]
+  /** Requests in the range that carry no cost in the ledger (no price, or no usage reported). */
+  unexplained: { unpricedCount: number; unknownUsageCount: number }
 }
 
 const MICRO = 1_000_000n
@@ -91,8 +94,20 @@ export function compare(ledger: LedgerDay[], bill: BillRow[], tolerance = '0.01'
       hints,
     })
   }
+  // A day×model the ledger could not price at all, with nothing on the bill: still listed.
+  for (const l of ledger) {
+    if (l.currency !== null || rows.some(r => r.day === l.day && r.model === l.model)) continue
+    if (rows.some(r => r.currency === null && r.day === l.day && r.model === l.model)) continue
+    rows.push({
+      day: l.day, model: l.model, currency: null, ours: null, bill: null, diff: '0', diffRatio: null,
+      withinTolerance: false, hints: [...hintsFor(l.day, l.model), 'missingInBill'],
+    })
+  }
+  rows.sort((a, b) => (a.day + a.model < b.day + b.model ? -1 : a.day + a.model > b.day + b.model ? 1 : 0))
+
   const totals = new Map<Currency, { ours: bigint; bill: bigint; out: number }>()
   for (const r of rows) {
+    if (r.currency === null) continue
     let t = totals.get(r.currency)
     if (!t) totals.set(r.currency, t = { ours: 0n, bill: 0n, out: 0 })
     t.ours += r.ours === null ? 0n : unitsOf(r.ours)
@@ -102,6 +117,10 @@ export function compare(ledger: LedgerDay[], bill: BillRow[], tolerance = '0.01'
   return {
     tolerance,
     rows,
+    unexplained: {
+      unpricedCount: ledger.reduce((n, l) => n + l.unpricedCount, 0),
+      unknownUsageCount: ledger.reduce((n, l) => n + l.unknownUsageCount, 0),
+    },
     totals: [...totals].sort(([a], [b]) => (a < b ? -1 : 1)).map(([currency, t]) => ({
       currency, ours: formatUnits(t.ours), bill: formatUnits(t.bill), diff: formatUnits(t.ours - t.bill), outOfTolerance: t.out,
     })),

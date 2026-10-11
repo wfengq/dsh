@@ -38,11 +38,15 @@ const DAY_MS = 86_400_000
 export function ledgerDaily(opts: LedgerDailyOptions): LedgerDay[] {
   const store = TallyStore.openReadOnly(opts.dbPath)
   try {
-    const pricing = new TallyPricing(loadCatalog(), {
+    const catalog = loadCatalog()
+    const pricing = new TallyPricing(catalog, {
       providerRoutes: opts.providerRoutes ?? DEFAULT_ROUTES,
       overrides: opts.overrides ?? [],
     })
     const dayKey = dayKeyer(opts.tz)
+    // Bills name the canonical model, so catalog aliases (e.g. deepseek-v4-flash → deepseek-flash) merge.
+    const canonical = (route: string, model: string) =>
+      catalog.providers[pricing.providerOf(route)]?.aliases?.[model] ?? model
     // A day in any zone lies within a day of the same UTC date, so widen by one day each side.
     const rows = store.usage({
       from: Date.parse(opts.from + 'T00:00:00Z') - DAY_MS,
@@ -52,9 +56,10 @@ export function ledgerDaily(opts: LedgerDailyOptions): LedgerDay[] {
     for (const row of rows) {
       const day = dayKey(row.at)
       if (day < opts.from || day > opts.to) continue
-      const key = day + '\u0000' + row.model
+      const model = canonical(row.route, row.model)
+      const key = day + '\u0000' + model
       let line = lines.get(key)
-      if (!line) lines.set(key, line = { day, model: row.model, rows: [] })
+      if (!line) lines.set(key, line = { day, model, rows: [] })
       line.rows.push(row)
     }
     const out: LedgerDay[] = []

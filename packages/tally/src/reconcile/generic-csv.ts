@@ -1,7 +1,7 @@
 import { formatFixed, parseAmount } from 'dsh-pricing-data'
 import type { Currency } from 'dsh-tally-api'
 import { registerBillParser, type BillColumn, type BillParser, type BillParseResult } from './bill.js'
-import { parseCsv } from './csv-read.js'
+import { parseCsvRecords } from './csv-read.js'
 
 const ALIASES: Record<BillColumn, string[]> = {
   day: ['日期', 'date', 'day', '账单日期'],
@@ -25,9 +25,14 @@ function parseDay(raw: string): string | null {
   return Number.isNaN(t.getTime()) || t.toISOString().slice(0, 10) !== day ? null : day
 }
 
-/** Strip currency symbols, thousands separators and blanks, then normalize; null if not a decimal. */
+/**
+ * Strip currency symbols and blanks, then thousands separators — only when they group digits in
+ * threes, so a malformed "1,2" is rejected rather than read as 12 — and normalize; null if not a decimal.
+ */
 function parseMoney(raw: string): string | null {
-  const cleaned = raw.replace(/[¥￥$,\s]/g, '')
+  const bare = raw.replace(/[¥￥$\s]/g, '')
+  if (bare.includes(',') && !/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(bare)) return null
+  const cleaned = bare.replaceAll(',', '')
   try {
     return formatFixed(parseAmount(cleaned))
   } catch {
@@ -40,8 +45,8 @@ export const genericCsv: BillParser = {
   describe: '通用 CSV：按列名识别日期、模型、金额、币种，可用 --column 指定列名',
   detect: () => false,
   parse(text, options): BillParseResult {
-    const [header = [], ...body] = parseCsv(text)
-    const names = header.map(h => h.trim().toLowerCase())
+    const [header, ...body] = parseCsvRecords(text)
+    const names = (header?.fields ?? []).map(h => h.trim().toLowerCase())
     const index = (col: BillColumn): number => {
       const wanted = options.columns?.[col]
       const candidates = wanted !== undefined ? [wanted.trim().toLowerCase()] : ALIASES[col]
@@ -55,8 +60,7 @@ export const genericCsv: BillParser = {
       throw new Error('账单没有“币种”列，请用 --currency 指定币种')
     }
     const result: BillParseResult = { rows: [], skipped: [] }
-    body.forEach((fields, i) => {
-      const line = i + 2
+    body.forEach(({ fields, line }) => {
       const day = parseDay(fields[at.day] ?? '')
       if (day === null) return void result.skipped.push({ line, reason: `无法解析日期：${fields[at.day] ?? ''}` })
       const amount = parseMoney(fields[at.amount] ?? '')

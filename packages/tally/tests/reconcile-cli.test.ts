@@ -71,10 +71,30 @@ describe('dsh-tally reconcile', () => {
     expect(help.stdout).toContain('--bill')
   })
 
-  it('maps bill model names and reads skipped lines into the report', () => {
+  it('maps bill model names, lists skipped lines and exits 1 because part of the bill was not reconciled', () => {
     const r = run('reconcile', '--bill', writeBill('2026-10-14,deepseek-chat,2,CNY\n2026-10-14,x,abc,CNY\n'),
       '--format', 'csv', '--db', db, '--model-map', 'deepseek-chat=deepseek-flash')
-    expect(r.status).toBe(0)
+    expect(r.status).toBe(1)
+    expect(r.stdout.split('\n')[0]).toContain('1 行无法解析')
     expect(r.stdout).toContain('第 3 行')
+  })
+
+  it('prints the skip reasons when no bill line could be parsed', () => {
+    const r = run('reconcile', '--bill', writeBill('2026-10-14,x,abc,CNY\n'), '--format', 'csv', '--db', db)
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('第 2 行')
+  })
+
+  it('accepts route mappings and names the mapping in the report', () => {
+    const r = run('reconcile', '--bill', writeBill('2026-10-14,deepseek-flash,2,CNY\n'), '--format', 'csv', '--db', db, '--route', 'my-proxy=deepseek')
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('my-proxy → deepseek')
+  })
+
+  it('reads price overrides from a JSON file', () => {
+    const overrides = join(dir, 'overrides.json')
+    writeFileSync(overrides, JSON.stringify([{ provider: 'deepseek-official', kind: 'manual', currency: 'CNY', models: { 'deepseek-flash': { input: '3', output: '1' } } }]))
+    const r = run('reconcile', '--bill', writeBill('2026-10-14,deepseek-flash,3,CNY\n'), '--format', 'csv', '--db', db, '--overrides', overrides)
+    expect(r.status).toBe(0)
   })
 })
