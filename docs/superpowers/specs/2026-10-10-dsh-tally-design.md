@@ -292,6 +292,7 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 ## 9. 发布与推广
 
 - 用 changesets 管理版本，发布到 npm；提交到 awesome-dsh-plugin 和 dsh-market。
+  - 2026-10-11 决定：所有往外部仓库或外部平台提交的动作（npm 发布、awesome-dsh-plugin / dsh-market 收录、`dsh-pricing-data` 单独推广）暂缓，等其余功能实现后再决定。计划 4 只做发布前的准备（版本管理、README、扫描结果），不实际提交。
 - README 中贴出 dsh-trust-check 对五个包的扫描结果，并说明为什么 balance-deepseek 这个包有红线、它的代码范围有多大。
 - ~~给现有插件提接入 PR~~：2026-10-11 决定不做。生态采用靠自带界面和公开文档（README 中的接入示例），不主动给其他作者的插件提 PR。
 - `dsh-pricing-data` 同时作为独立的数据包推广给其他 agent 生态的用量工具。
