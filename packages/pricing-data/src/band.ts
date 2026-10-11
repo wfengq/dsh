@@ -69,3 +69,62 @@ export function resolveBand(windows: PeakWindows | undefined, holidays: HolidayC
   // A missing calendar can only turn a peak into off-peak, so it only matters (price may be overestimated) for peak results.
   return inPeak ? { band: 'peak', holidayCalendarMissing } : { band: 'offpeak', holidayCalendarMissing: false }
 }
+
+const DAY_MS = 86_400_000
+const LOOKAHEAD_DAYS = 8
+const offsetFormatters = new Map<string, Intl.DateTimeFormat>()
+
+/** UTC offset of `timeZone` at `at`, as local-minus-UTC in milliseconds (second resolution). */
+function utcOffsetMs(timeZone: string, at: number): number {
+  let fmt = offsetFormatters.get(timeZone)
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
+    })
+    offsetFormatters.set(timeZone, fmt)
+  }
+  const p: Record<string, number> = {}
+  for (const part of fmt.formatToParts(at)) if (part.type !== 'literal') p[part.type] = Number(part.value)
+  return Date.UTC(p.year!, p.month! - 1, p.day!, p.hour! % 24, p.minute!, p.second!) - Math.floor(at / 1000) * 1000
+}
+
+/** The instant at which the wall clock of `timeZone` reads `localMs` (a local time expressed as if it were UTC). */
+function localToUtc(timeZone: string, localMs: number): number {
+  // The offset is looked up at the guess and once more at the corrected instant, which settles
+  // everywhere except inside a daylight-saving gap (where the wall time does not exist).
+  let utc = localMs - utcOffsetMs(timeZone, localMs)
+  utc = localMs - utcOffsetMs(timeZone, utc)
+  return utc
+}
+
+/**
+ * The earliest instant strictly after `at` whose band differs from the band at `at`, or `null`
+ * when there are no `windows` (flat pricing) or the band does not change within eight days.
+ *
+ * Candidates are the start and end of every peak range and local midnight (weekday and holiday
+ * rules switch there) on each of the following days; only these instants can change the band.
+ */
+export function nextBandChange(windows: PeakWindows | undefined, holidays: HolidayCalendars, at: number): number | null {
+  if (!windows) return null
+  const current = resolveBand(windows, holidays, at).band
+  const minutes = new Set<number>([0])
+  for (const range of windows.peak) for (const m of parseRange(range)) minutes.add(m)
+
+  const local = localParts(at, windows.tz)
+  const [year, month, day] = local.date.split('-').map(Number) as [number, number, number]
+  const candidates: number[] = []
+  for (let d = 0; d <= LOOKAHEAD_DAYS; d++) {
+    const midnight = Date.UTC(year, month - 1, day + d)
+    for (const m of minutes) {
+      // A range end of 24:00 is the next day's midnight, which the next day already covers.
+      if (m >= 24 * 60) continue
+      const t = localToUtc(windows.tz, midnight + m * 60_000)
+      if (t > at && t <= at + LOOKAHEAD_DAYS * DAY_MS) candidates.push(t)
+    }
+  }
+  candidates.sort((a, b) => a - b)
+  for (const t of candidates) {
+    if (resolveBand(windows, holidays, t).band !== current) return t
+  }
+  return null
+}

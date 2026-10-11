@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { loadCatalog, quote } from '../src/index.js'
+import { bandAt, loadCatalog, quote } from '../src/index.js'
 import type { PriceCatalog } from '../src/index.js'
 
 const M = 1_000_000
@@ -20,6 +20,14 @@ describe('quote', () => {
     expect('holidayCalendarMissing' in q).toBe(false) // weekday, calendar missing, but off-peak: nothing to overestimate
     const weekend = quote(c, { provider: 'deepseek', model: 'deepseek-v4-pro', usage: u, at: sh('2026-10-17T10:00:00.000') })!
     expect('holidayCalendarMissing' in weekend).toBe(false)
+  })
+
+  it('forces the requested band at a peak instant', () => {
+    const forced = quote(c, { provider: 'deepseek', model: 'deepseek-flash', usage: u, at: sh('2026-10-14T10:00:00.000'), band: 'offpeak' })!
+    expect(forced.amount).toBe('5.02')
+    expect(forced.band).toBe('offpeak')
+    expect('holidayCalendarMissing' in forced).toBe(false)
+    expect(quote(c, { provider: 'deepseek', model: 'deepseek-flash', usage: u, at: sh('2026-10-14T10:00:00.000'), band: 'flat' })).toBeNull()
   })
 
   it('prices pro at peak and off-peak', () => {
@@ -110,5 +118,19 @@ describe('quote edge cases', () => {
     const cat = make('output', [{ ...v2, rates: { flat: { input: '1', output: '2', cacheWrite: '1.25' } } }])
     const q = quote(cat, { provider: 'p', model: 'm', usage: { inputTokens: 0, outputTokens: 0, cacheWriteTokens: M }, at: at('2026-07-01T00:00:00Z') })!
     expect(q.breakdown.cacheWrite).toBe('1.25')
+  })
+})
+
+describe('bandAt', () => {
+  it('reports the band and when it next changes', () => {
+    expect(bandAt(c, { provider: 'deepseek', model: 'deepseek-flash', at: sh('2026-10-14T10:00:00.000') }))
+      .toEqual({ band: 'peak', until: sh('2026-10-14T12:00:00.000'), holidayCalendarMissing: true })
+    expect(bandAt(c, { provider: 'deepseek', model: 'deepseek-v4-flash', at: sh('2026-10-17T10:00:00.000') }))
+      .toEqual({ band: 'offpeak', until: sh('2026-10-19T09:00:00.000'), holidayCalendarMissing: false })
+  })
+
+  it('is null when nothing can be priced', () => {
+    expect(bandAt(c, { provider: 'deepseek', model: 'deepseek-flash', at: sh('2026-10-09T10:00:00.000') })).toBeNull()
+    expect(bandAt(c, { provider: 'acme', model: 'x', at: sh('2026-10-14T10:00:00.000') })).toBeNull()
   })
 })

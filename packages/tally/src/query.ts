@@ -29,7 +29,7 @@ const REASONING_PROBE: TokenCounts = { ...ZERO_USAGE, reasoningTokens: 1_000_000
 const offsetFormatters = new Map<string, Intl.DateTimeFormat>()
 
 /** UTC offset of `tz` at `at`, in whole milliseconds of local-minus-UTC (seconds resolution). */
-function utcOffsetMs(tz: string, at: number): number {
+export function utcOffsetMs(tz: string, at: number): number {
   let fmt = offsetFormatters.get(tz)
   if (fmt === undefined) {
     fmt = new Intl.DateTimeFormat('en-US', {
@@ -279,6 +279,14 @@ export function aggregate(
     add(acc, e, rates)
   }
   return [...groups.values()].sort((a, b) => compareKeys(a.key, b.key)).map(finish)
+}
+
+/** One group (keyed `key`) over all `entries`, priced like {@link aggregate}. */
+export function groupOf(entries: UsageRow[], pricing: TallyPricing, key: string): UsageGroup {
+  const rates = new RateCache(pricing)
+  const acc = newAccumulator(key)
+  for (const e of entries) add(acc, e, rates)
+  return finish(acc)
 }
 
 /**

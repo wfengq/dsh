@@ -119,6 +119,51 @@ export interface TallyStatusView {
   balanceRoutes: string[]
 }
 
+/** One session as the browser shows it: its usage plus where its latest request went. */
+export interface SessionView {
+  usage: SessionUsage
+  /** Route of the session's own latest request; `null` when the session has no entries of its own. */
+  lastRoute: string | null
+  lastModel: string | null
+}
+
+/** The requests of one turn: their total and each attempt, oldest first. */
+export interface TurnUsage {
+  total: UsageGroup
+  attempts: TallyEntry[]
+}
+
+/** The price band that applies to a route and model now, and when it next changes. */
+export interface BandView {
+  band: TallyBand
+  /** Epoch milliseconds of the next band change; `null` when the price is flat or no change is in reach. */
+  until: number | null
+  /** The holiday calendar for the year is missing; a `peak` band may be too high. */
+  holidayCalendarMissing: boolean
+}
+
+/** The bundled price catalog, listing for each model the price version in effect. */
+export interface CatalogView {
+  version: string
+  providers: {
+    id: string
+    currency: Currency
+    models: {
+      model: string
+      priceVersion: string
+      effectiveFrom: string
+      source: { url: string; retrievedAt: string }
+    }[]
+  }[]
+}
+
+/** What peak-band requests cost against what the same tokens would cost at the off-peak rate; per currency. */
+export interface PeakSavings {
+  peak: Money[]
+  offpeakEquivalent: Money[]
+  saving: Money[]
+}
+
 export interface UsageService {
   query(q: UsageQuery): Promise<UsageGroup[]>
   /** Usage of one session, including a breakdown per sub-agent. */

@@ -43,6 +43,22 @@ function entry(over: Partial<StoredEntry> = {}): StoredEntry {
 }
 
 describe('TallyStore', () => {
+  it('reads one session by closed seq range, ordered by time and then numeric seq', () => {
+    store = TallyStore.open(path)
+    // Same timestamp: seq 10 must sort after seq 9 (numerically, not as text), and a colon in the session id must not confuse the seq.
+    for (const [id, sessionId, at] of [
+      ['s1:10', 's1', 2000], ['s1:9', 's1', 2000], ['s1:2', 's1', 1000], ['s1:20', 's1', 3000], ['s10:5', 's10', 1000], ['a:b:7', 'a:b', 1500],
+    ] as const) store.upsertEntry(entry({ id, sessionId, at }))
+    expect(store.sessionEntries('s1').map(e => e.id)).toEqual(['s1:2', 's1:9', 's1:10', 's1:20'])
+    expect(store.sessionEntries('s1', { from: 9, to: 10 }).map(e => e.id)).toEqual(['s1:9', 's1:10'])
+    expect(store.sessionEntries('s1', { from: 3, to: 8 })).toEqual([])
+    expect(store.sessionEntries('a:b', { from: 7, to: 7 }).map(e => e.id)).toEqual(['a:b:7'])
+    expect(store.latestSessionEntry('s1')?.id).toBe('s1:20')
+    expect(store.latestSessionEntry('nobody')).toBeUndefined()
+    store.upsertEntry(entry({ id: 's1:21', at: 3000 }))
+    expect(store.latestSessionEntry('s1')?.id).toBe('s1:21')
+  })
+
   it('opens without printing the SQLite ExperimentalWarning and keeps other warnings', () => {
     // A fresh process, since Node prints each experimental warning only once per process.
     // Runs the built entry (`pnpm test` builds first), as dsh would load it.

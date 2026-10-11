@@ -2,12 +2,14 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Session, SessionEvent, SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 // Declares `ctx.sessionQuery` on the cordis Context.
 import type {} from '@deepseek-ai/dsh-session-query'
+import { addFixed, formatFixed, parseAmount, type Fixed } from 'dsh-pricing-data'
 import type {
-  SessionUsage, TallyEntry, TallyStatus, UsageGroup, UsageQuery, UsageService,
+  Money, PeakSavings, SessionUsage, SessionView, TallyEntry, TallyStatus, TurnUsage, UsageGroup, UsageQuery, UsageService,
 } from 'dsh-tally-api'
 import { withoutInterruptedClosers } from './cold-log.js'
 import { TallyPricing, type TallyPricingService } from './pricing-service.js'
-import { aggregate, sessionUsage, toUsage } from './query.js'
+import { CSV_HEADER, csvLine, csvRow } from './csv.js'
+import { aggregate, groupOf, sessionUsage, toUsage } from './query.js'
 import { Recorder, type SessionHeaderLike } from './recorder.js'
 import { TallyStore, type StoredEntry, type UsageRow } from './store.js'
 
@@ -154,6 +156,60 @@ export class TallyUsage extends Service implements UsageService {
     return sessionUsage(entries, sessionId, this.pricing())
   }
 
+  /** A session's usage with the route and model of its own latest request. */
+  async sessionView(sessionId: string): Promise<SessionView> {
+    const latest = this.store.latestSessionEntry(sessionId)
+    return {
+      usage: await this.session(sessionId),
+      lastRoute: latest?.route ?? null,
+      lastModel: latest?.model ?? null,
+    }
+  }
+
+  /** The entries of one session whose `seq` lies in the closed interval `[fromSeq, toSeq]`, oldest first, with their total. */
+  async turn(sessionId: string, fromSeq: number, toSeq: number): Promise<TurnUsage> {
+    const stored = this.store.sessionEntries(sessionId, { from: fromSeq, to: toSeq })
+    return {
+      total: groupOf(stored, this.pricing(), sessionId),
+      attempts: stored.map(e => this.entryOf(e)),
+    }
+  }
+
+  /** The ledger rows with `from <= at < to` as UTF-8 CSV, oldest first; times are written in `tz`. */
+  async exportCsv(from: number, to: number, tz: string): Promise<string> {
+    const stored = this.store.entries({ from, to }).sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    return csvLine(CSV_HEADER) + stored.map(e => csvRow(this.entryOf(e), tz)).join('')
+  }
+
+  /**
+   * What the peak-band requests of `[from, to)` cost against the same tokens at the off-peak
+   * rate, per currency. A request counts only when both prices are known.
+   */
+  async peakSavings(from: number, to: number): Promise<PeakSavings> {
+    const pricing = this.pricing()
+    const totals = new Map<Money['currency'], { peak: Fixed; offpeak: Fixed }>()
+    for (const e of this.store.usage({ from, to })) {
+      if (!e.usageKnown) continue
+      const usage = toUsage(e.tokens)
+      const peak = pricing.quoteRoute(e.route, e.model, usage, e.at)
+      if (peak?.band !== 'peak') continue
+      const offpeak = pricing.quoteRoute(e.route, e.model, usage, e.at, 'offpeak')
+      if (offpeak === null || offpeak.currency !== peak.currency) continue
+      const sum = totals.get(peak.currency) ?? { peak: { units: 0n }, offpeak: { units: 0n } }
+      sum.peak = addFixed(sum.peak, parseAmount(peak.amount))
+      sum.offpeak = addFixed(sum.offpeak, parseAmount(offpeak.amount))
+      totals.set(peak.currency, sum)
+    }
+    const currencies = [...totals.keys()].sort()
+    const money = (pick: (t: { peak: Fixed; offpeak: Fixed }) => Fixed): Money[] =>
+      currencies.map(currency => ({ amount: formatSigned(pick(totals.get(currency)!)), currency }))
+    return {
+      peak: money(t => t.peak),
+      offpeakEquivalent: money(t => t.offpeak),
+      saving: money(t => ({ units: t.peak.units - t.offpeak.units })),
+    }
+  }
+
   /** Drop the whole ledger and replay every session log; resolves when the replay finished. Emits no `tally/recorded`. */
   rebuild(): Promise<void> {
     const state = this.state
@@ -293,27 +349,32 @@ export class TallyUsage extends Service implements UsageService {
     }
   }
 
+  /** The public view of a stored entry: priced with the current rules. */
+  private entryOf(e: StoredEntry): TallyEntry {
+    const pricing = this.pricing()
+    // Unknown usage is never priced, so it has no band or price version either.
+    const q = e.usageKnown ? quoteEntry(pricing, e) : null
+    return {
+      id: e.id,
+      sessionId: e.sessionId,
+      rootSessionId: e.rootSessionId,
+      ...e.workspaceId === null ? {} : { workspaceId: e.workspaceId },
+      at: e.at,
+      route: e.route,
+      provider: pricing.providerOf(e.route),
+      model: e.model,
+      band: q?.band ?? null,
+      tokens: { ...e.tokens },
+      cost: q === null ? null : { amount: q.amount, currency: q.currency },
+      priceVersion: q?.priceVersion ?? null,
+      usageKnown: e.usageKnown,
+    }
+  }
+
   private emitRecorded(e: StoredEntry): void {
     let entry: TallyEntry
     try {
-      const pricing = this.pricing()
-      // Unknown usage is never priced, so it has no band or price version either.
-      const q = e.usageKnown ? quoteEntry(pricing, e) : null
-      entry = {
-        id: e.id,
-        sessionId: e.sessionId,
-        rootSessionId: e.rootSessionId,
-        ...e.workspaceId === null ? {} : { workspaceId: e.workspaceId },
-        at: e.at,
-        route: e.route,
-        provider: pricing.providerOf(e.route),
-        model: e.model,
-        band: q?.band ?? null,
-        tokens: { ...e.tokens },
-        cost: q === null ? null : { amount: q.amount, currency: q.currency },
-        priceVersion: q?.priceVersion ?? null,
-        usageKnown: e.usageKnown,
-      }
+      entry = this.entryOf(e)
     } catch (error) {
       this.ctx.logger.warn(`tally/recorded for ${e.id} skipped: ${messageOf(error)}`)
       return
@@ -324,6 +385,11 @@ export class TallyUsage extends Service implements UsageService {
       this.ctx.logger.warn(`tally/recorded listener failed for ${e.id}: ${messageOf(error)}`)
     }
   }
+}
+
+/** Decimal string of a fixed-point value that may be negative. */
+function formatSigned(f: Fixed): string {
+  return f.units < 0n ? '-' + formatFixed({ units: -f.units }) : formatFixed(f)
 }
 
 function quoteEntry(pricing: TallyPricing, e: UsageRow) {

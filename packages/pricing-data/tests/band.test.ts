@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveBand } from '../src/band.js'
+import { nextBandChange, resolveBand } from '../src/band.js'
 import type { HolidayCalendars, PeakWindows } from '../src/types.js'
 
 const W: PeakWindows = { tz: 'Asia/Shanghai', peak: ['09:00-12:00', '14:00-18:00'], days: [1, 2, 3, 4, 5], excludeHolidays: 'CN' }
@@ -67,5 +67,36 @@ describe('resolveBand', () => {
       if (original === undefined) delete process.env.TZ
       else process.env.TZ = original
     }
+  })
+})
+
+describe('nextBandChange', () => {
+  it('returns the end of the current peak window', () => {
+    // Wednesday 11:59:59 is peak; the window ends at 12:00 the same day.
+    expect(nextBandChange(W, H, sh('2026-10-14T11:59:59.000'))).toBe(sh('2026-10-14T12:00:00.000'))
+  })
+
+  it('skips the weekend to the next Monday window start', () => {
+    // Friday 18:30 is off-peak; the next peak starts on Monday 09:00.
+    expect(nextBandChange(W, H, sh('2026-10-16T18:30:00.000'))).toBe(sh('2026-10-19T09:00:00.000'))
+  })
+
+  it('is strictly after the given instant', () => {
+    expect(nextBandChange(W, H, sh('2026-10-14T12:00:00.000'))).toBe(sh('2026-10-14T14:00:00.000'))
+    expect(nextBandChange(W, H, sh('2026-10-14T09:00:00.000'))).toBe(sh('2026-10-14T12:00:00.000'))
+  })
+
+  it('moves to the next day after the last window, or over a holiday', () => {
+    expect(nextBandChange(W, H, sh('2026-10-14T18:00:00.000'))).toBe(sh('2026-10-15T09:00:00.000'))
+    // 2026-10-01 (Thursday) is a fixture holiday: off-peak all day, so the next peak is Friday 09:00.
+    expect(nextBandChange(W, H, sh('2026-09-30T18:00:00.000'))).toBe(sh('2026-10-02T09:00:00.000'))
+  })
+
+  it('returns null without windows', () => {
+    expect(nextBandChange(undefined, H, sh('2026-10-14T10:00:00.000'))).toBeNull()
+  })
+
+  it('returns null when the band never changes within the lookahead', () => {
+    expect(nextBandChange({ ...W, days: [] }, H, sh('2026-10-14T10:00:00.000'))).toBeNull()
   })
 })

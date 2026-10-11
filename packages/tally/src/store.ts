@@ -53,6 +53,9 @@ const USAGE_COLUMNS = 'session_id, workspace_id, at, route, model, input, cache_
 /** A row read with `setReturnArrays(true)`, in the order of its column list. */
 type ArrayRow = unknown[]
 
+/** The `seq` part of an entry id (`sessionId + ':' + seq`). */
+const SEQ_OF_ID = 'CAST(substr(id, length(session_id) + 2) AS INTEGER)'
+
 const SCHEMA = `
 CREATE TABLE entries (
   id TEXT PRIMARY KEY,
@@ -237,6 +240,26 @@ export class TallyStore {
    */
   usage(filter: EntryFilter): UsageRow[] {
     return this.#select(USAGE_COLUMNS, filter).map(toUsageRow)
+  }
+
+  /**
+   * Entries of one session ordered by time, then by `seq`. `seqRange` keeps only entries whose
+   * `seq` (the number after the session id in the entry id) lies in that closed interval.
+   */
+  sessionEntries(sessionId: string, seqRange?: { from: number; to: number }): StoredEntry[] {
+    const range = seqRange === undefined ? '' : ` AND ${SEQ_OF_ID} BETWEEN ? AND ?`
+    const statement = this.#db.prepare(`SELECT ${ENTRY_COLUMNS} FROM entries WHERE session_id = ?${range} ORDER BY at, ${SEQ_OF_ID}`)
+    statement.setReturnArrays(true)
+    const params = seqRange === undefined ? [sessionId] : [sessionId, seqRange.from, seqRange.to]
+    return (statement.all(...params) as unknown as ArrayRow[]).map(toEntry)
+  }
+
+  /** The newest entry of one session (by time, then `seq`), if it has any. */
+  latestSessionEntry(sessionId: string): StoredEntry | undefined {
+    const statement = this.#db.prepare(`SELECT ${ENTRY_COLUMNS} FROM entries WHERE session_id = ? ORDER BY at DESC, ${SEQ_OF_ID} DESC LIMIT 1`)
+    statement.setReturnArrays(true)
+    const rows = statement.all(sessionId) as unknown as ArrayRow[]
+    return rows[0] === undefined ? undefined : toEntry(rows[0])
   }
 
   #select(columns: string, filter: EntryFilter): ArrayRow[] {

@@ -1,18 +1,21 @@
 import { Service, type Context } from '@deepseek-ai/cordis'
 import {
   addFixed,
+  bandAt,
   costOf,
+  effectiveVersion,
   formatFixed,
   loadCatalog,
   parseDecimal,
   quote,
+  type Band,
   type Fixed,
   type PriceCatalog,
   type Quote,
   type Rates,
   type TokenCounts,
 } from 'dsh-pricing-data'
-import type { PricingService, ProviderPriceOverride, TallyStatus } from 'dsh-tally-api'
+import type { BandView, CatalogView, PricingService, ProviderPriceOverride, TallyStatus } from 'dsh-tally-api'
 
 export interface TallyPricingOptions {
   /** Route id (as recorded in the session log) -> pricing vendor in the catalog. */
@@ -126,18 +129,57 @@ export class TallyPricing implements PricingService {
     return Object.hasOwn(this.#providerRoutes, route) ? this.#providerRoutes[route] : route
   }
 
-  quoteRoute(route: string, model: string, usage: TokenCounts, at: number): Quote | null {
+  /**
+   * Price one request of a route. `band` prices it at that band's rates instead of the band
+   * that applies at `at`; a manual override has only flat rates, so any other band is unpriced.
+   */
+  quoteRoute(route: string, model: string, usage: TokenCounts, at: number, band?: Band): Quote | null {
     const override = this.#byRoute.get(route)
-    if (override?.kind === 'manual') return quoteManual(route, this.#manual.get(route)!, model, usage)
-    if (override?.kind === 'alias') {
-      return quote(this.#catalog, {
-        provider: override.target.provider,
-        model: override.target.model ?? model,
-        usage,
-        at,
-      })
+    if (override?.kind === 'manual') {
+      if (band !== undefined && band !== 'flat') return null
+      return quoteManual(route, this.#manual.get(route)!, model, usage)
     }
-    return quote(this.#catalog, { provider: this.providerOf(route), model, usage, at })
+    const { provider, model: target } = this.#target(route, model)
+    return quote(this.#catalog, { provider, model: target, usage, at, ...band === undefined ? {} : { band } })
+  }
+
+  /** The catalog vendor and model that (route, model) is priced as, after route mapping and alias overrides. */
+  #target(route: string, model: string): { provider: string; model: string } {
+    const override = this.#byRoute.get(route)
+    if (override?.kind === 'alias') return { provider: override.target.provider, model: override.target.model ?? model }
+    return { provider: this.providerOf(route), model }
+  }
+
+  /**
+   * The price band of (route, model) at `at` and when it next changes, or `null` when no price
+   * is known. A manual override has no peak windows: its band is always flat.
+   */
+  bandOf(route: string, model: string, at: number): BandView | null {
+    const override = this.#byRoute.get(route)
+    if (override?.kind === 'manual') {
+      return this.#manual.get(route)!.models.has(model) ? { band: 'flat', until: null, holidayCalendarMissing: false } : null
+    }
+    return bandAt(this.#catalog, { ...this.#target(route, model), at })
+  }
+
+  /** The bundled catalog with, for each model, the price version in effect at `at`. */
+  catalogView(at: number): CatalogView {
+    const providers: CatalogView['providers'] = []
+    for (const [id, provider] of Object.entries(this.#catalog.providers)) {
+      const models: CatalogView['providers'][number]['models'] = []
+      for (const [model, versions] of Object.entries(provider.models)) {
+        const version = effectiveVersion(versions, at)
+        if (!version) continue
+        models.push({
+          model,
+          priceVersion: version.id,
+          effectiveFrom: version.effectiveFrom,
+          source: { url: version.source.url, retrievedAt: version.source.retrievedAt },
+        })
+      }
+      providers.push({ id, currency: provider.currency, models })
+    }
+    return { version: this.#catalog.generatedAt, providers }
   }
 
   /**
@@ -153,11 +195,8 @@ export class TallyPricing implements PricingService {
    * weekdays and holiday dates (which change at local midnight) cannot change inside a bucket.
    */
   bucketStableZones(route: string, model: string, bucketMs: number): string[] | null {
-    const override = this.#byRoute.get(route)
-    if (override?.kind === 'manual') return []
-    const target = override?.kind === 'alias'
-      ? { provider: override.target.provider, model: override.target.model ?? model }
-      : { provider: this.providerOf(route), model }
+    if (this.#byRoute.get(route)?.kind === 'manual') return []
+    const target = this.#target(route, model)
     const provider = Object.hasOwn(this.#catalog.providers, target.provider) ? this.#catalog.providers[target.provider] : undefined
     if (!provider) return []
     const aliased = provider.aliases && Object.hasOwn(provider.aliases, target.model) ? provider.aliases[target.model] : target.model
