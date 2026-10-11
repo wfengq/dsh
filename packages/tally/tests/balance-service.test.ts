@@ -114,7 +114,7 @@ describe('TallyBalance', () => {
     vi.setSystemTime(Date.now() + 1000)
     fail = true
     const snap = await balance.refresh('r')
-    expect(snap).toEqual({ ...ok, stale: true, error: 'HTTP 503' })
+    expect(snap).toEqual({ ...ok, stale: true, error: 'HTTP 503', errorCode: 'failed' })
     expect(await balance.get('r')).toEqual(snap)
     expect(changes).toHaveLength(2)
     expect(changes[1]).toEqual(snap)
@@ -130,7 +130,7 @@ describe('TallyBalance', () => {
     const balance = await load()
     balance.register('r', async () => { throw new Error('HTTP 401') })
     const snap = await balance.refresh('r')
-    expect(snap).toEqual({ provider: 'r', wallets: [], fetchedAt: Date.now(), stale: true, error: 'HTTP 401' })
+    expect(snap).toEqual({ provider: 'r', wallets: [], fetchedAt: Date.now(), stale: true, error: 'HTTP 401', errorCode: 'failed' })
     expect(changes).toEqual([snap])
   })
 
@@ -275,6 +275,58 @@ describe('TallyBalance', () => {
     const snap = await pending
     expect(snap).toMatchObject({ provider: 'r', wallets: [], stale: true })
     expect(snap!.error).toEqual(expect.any(String))
+    expect(snap!.errorCode).toBe('timeout')
+  })
+
+  it('copies a known error code of the fetcher into the snapshot', async () => {
+    const balance = await load()
+    balance.register('a', async () => { throw Object.assign(new Error('x not configured'), { code: 'not-configured' }) })
+    balance.register('b', async () => { throw Object.assign(new Error('out'), { code: 'signed-out' }) })
+    balance.register('c', async () => { throw Object.assign(new Error('odd'), { code: 'ECONNRESET' }) })
+    balance.register('d', async () => { throw Object.assign(new Error('num'), { code: 7 }) })
+    expect(await balance.refresh('a')).toMatchObject({ error: 'x not configured', errorCode: 'not-configured', stale: true })
+    expect(await balance.refresh('b')).toMatchObject({ errorCode: 'signed-out' })
+    expect(await balance.refresh('c')).toMatchObject({ errorCode: 'failed' })
+    expect(await balance.refresh('d')).toMatchObject({ errorCode: 'failed' })
+  })
+
+  it('drops the error code once a refresh succeeds', async () => {
+    const balance = await load()
+    let fail = true
+    balance.register('r', async () => {
+      if (fail) throw new Error('down')
+      return CNY_86
+    })
+    expect(await balance.refresh('r')).toMatchObject({ errorCode: 'failed' })
+    fail = false
+    expect(await balance.refresh('r')).not.toHaveProperty('errorCode')
+  })
+
+  it('retries get() after a first failure only once minIntervalMs has passed', async () => {
+    const balance = await load()
+    let fail = true
+    const fetcher = vi.fn(async () => {
+      if (fail) throw new Error('HTTP 503')
+      return CNY_86
+    })
+    balance.register('r', fetcher)
+    const first = await balance.get('r')
+    expect(first).toMatchObject({ wallets: [], stale: true, error: 'HTTP 503' })
+    expect(await balance.get('r')).toEqual(first)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    vi.setSystemTime(Date.now() + CONFIG.minIntervalMs)
+    expect(await balance.get('r')).toEqual(first)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    vi.setSystemTime(Date.now() + 1)
+    fail = false
+    const retried = await balance.get('r')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(retried).toMatchObject({ wallets: CNY_86, stale: false })
+    expect(retried).not.toHaveProperty('error')
+    // A snapshot that has succeeded once is served from cache whatever its age.
+    vi.setSystemTime(Date.now() + 10 * CONFIG.minIntervalMs)
+    await balance.get('r')
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
   it('aborts in-flight requests and clears timers when the service is disposed', async () => {

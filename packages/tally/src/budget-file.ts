@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { parseDecimal } from 'dsh-pricing-data'
 import type { Budget } from 'dsh-tally-api'
 
@@ -78,84 +79,183 @@ function parseData(raw: unknown): BudgetFileData {
   return { version: 1, budgets, fired }
 }
 
-/** Budgets plus per-period alert bookkeeping, persisted atomically on every change. */
+/** Identity of the file content last read or written; a change means another writer got there. */
+interface Signature {
+  mtimeMs: number
+  size: number
+}
+
+interface DiskState {
+  data: BudgetFileData
+  signature: Signature | undefined
+  /** Set when the file was unusable and has been moved aside. */
+  loadError?: string
+}
+
+function emptyData(): BudgetFileData {
+  return { version: 1, budgets: [], fired: {} }
+}
+
+function signatureOf(path: string): Signature | undefined {
+  try {
+    const { mtimeMs, size } = statSync(path)
+    return { mtimeMs, size }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+/** Read the file; a corrupt one is moved aside and reported as `loadError`. */
+function readDisk(path: string): DiskState {
+  let text: string
+  let signature: Signature | undefined
+  try {
+    signature = signatureOf(path)
+    if (signature === undefined) return { data: emptyData(), signature }
+    text = readFileSync(path, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { data: emptyData(), signature: undefined }
+    throw error
+  }
+  try {
+    return { data: parseData(JSON.parse(text)), signature }
+  } catch (error) {
+    renameSync(path, `${path}.corrupt-${Date.now()}`)
+    return {
+      data: emptyData(),
+      signature: undefined,
+      loadError: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+/**
+ * Budgets plus per-period alert bookkeeping, shared by every dsh process using the same file.
+ *
+ * Every write runs under a cross-process lock: it re-reads the file, merges its own change into what
+ * it finds and replaces the file atomically, so concurrent writers never lose each other's changes.
+ * Reads compare the file's `mtimeMs` and size with the last ones seen and reload on a change. Memory
+ * is only updated after a write succeeded.
+ */
 export class BudgetFile {
   /** Why the file was quarantined on load, if it was. */
   loadError: string | undefined
 
+  /** Tail of this instance's write queue; it never rejects. */
+  private writes: Promise<void> = Promise.resolve()
+
   private constructor(
     private readonly path: string,
     private data: BudgetFileData,
+    private signature: Signature | undefined,
   ) {}
 
   static load(path: string): BudgetFile {
-    let text: string
-    try {
-      text = readFileSync(path, 'utf8')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return new BudgetFile(path, { version: 1, budgets: [], fired: {} })
-      }
-      throw error
-    }
-    try {
-      return new BudgetFile(path, parseData(JSON.parse(text)))
-    } catch (error) {
-      const file = new BudgetFile(path, { version: 1, budgets: [], fired: {} })
-      file.loadError = error instanceof Error ? error.message : String(error)
-      renameSync(path, `${path}.corrupt-${Date.now()}`)
-      return file
-    }
+    const state = readDisk(path)
+    const file = new BudgetFile(path, state.data, state.signature)
+    file.loadError = state.loadError
+    return file
   }
 
   budgets(): Budget[] {
+    this.reloadIfChanged()
     return structuredClone(this.data.budgets)
   }
 
-  put(b: Budget): void {
+  async put(b: Budget): Promise<void> {
     const errors = validateBudget(b)
     if (errors.length > 0) throw new Error(`tally: invalid budget: ${errors.join('; ')}`)
     const copy = structuredClone(b)
-    const i = this.data.budgets.findIndex((x) => x.id === b.id)
-    if (i >= 0) this.data.budgets[i] = copy
-    else this.data.budgets.push(copy)
-    this.save()
+    await this.update((data) => {
+      const i = data.budgets.findIndex((x) => x.id === b.id)
+      if (i >= 0) data.budgets[i] = copy
+      else data.budgets.push(copy)
+      return true
+    })
   }
 
-  delete(id: string): boolean {
-    const i = this.data.budgets.findIndex((x) => x.id === id)
-    if (i < 0) return false
-    this.data.budgets.splice(i, 1)
-    delete this.data.fired[id]
-    this.save()
-    return true
+  async delete(id: string): Promise<boolean> {
+    return this.update((data) => {
+      const i = data.budgets.findIndex((x) => x.id === id)
+      if (i < 0) return false
+      data.budgets.splice(i, 1)
+      delete data.fired[id]
+      return true
+    })
   }
 
   fired(budgetId: string, periodStart: number): Threshold[] {
+    this.reloadIfChanged()
     const rec = this.data.fired[budgetId]
     return rec && rec.periodStart === periodStart ? [...rec.thresholds] : []
   }
 
   /** Start of the period the budget's alerts were last recorded for, if any alert was ever recorded. */
   lastFiredPeriod(budgetId: string): number | undefined {
+    this.reloadIfChanged()
     return this.data.fired[budgetId]?.periodStart
   }
 
-  markFired(budgetId: string, periodStart: number, t: Threshold): void {
-    const rec = this.data.fired[budgetId]
-    if (rec && rec.periodStart === periodStart) {
-      if (rec.thresholds.includes(t)) return
+  /** Record an alert; a newer period on disk wins, the same period gets the union of thresholds. */
+  async markFired(budgetId: string, periodStart: number, t: Threshold): Promise<void> {
+    await this.update((data) => {
+      const rec = data.fired[budgetId]
+      if (rec === undefined || rec.periodStart < periodStart) {
+        data.fired[budgetId] = { periodStart, thresholds: [t] }
+        return true
+      }
+      if (rec.periodStart > periodStart || rec.thresholds.includes(t)) return false
       rec.thresholds.push(t)
-    } else {
-      this.data.fired[budgetId] = { periodStart, thresholds: [t] }
-    }
-    this.save()
+      return true
+    })
   }
 
-  private save(): void {
-    mkdirSync(dirname(this.path), { recursive: true })
-    const tmp = `${this.path}.tmp-${process.pid}`
-    writeFileSync(tmp, `${JSON.stringify(this.data, null, 2)}\n`)
-    renameSync(tmp, this.path)
+  private reloadIfChanged(): void {
+    let signature: Signature | undefined
+    try {
+      signature = signatureOf(this.path)
+    } catch {
+      return // unreadable right now: keep what we have
+    }
+    if (signature?.mtimeMs === this.signature?.mtimeMs && signature?.size === this.signature?.size) return
+    try {
+      const state = readDisk(this.path)
+      this.data = state.data
+      this.signature = state.signature
+      if (state.loadError !== undefined) this.loadError = state.loadError
+    } catch {
+      // keep the previous state; the next read or write tries again
+    }
+  }
+
+  /**
+   * Run `mutate` on a fresh copy of the file content under the lock; when it reports a change, write the
+   * result and only then adopt it. Returns what `mutate` returned.
+   */
+  private update(mutate: (data: BudgetFileData) => boolean): Promise<boolean> {
+    // One writer per instance at a time, so a burst of writes queues here instead of all polling the lock.
+    const run = this.writes.then(() => this.locked(mutate))
+    this.writes = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  private async locked(mutate: (data: BudgetFileData) => boolean): Promise<boolean> {
+    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 })
+    return withFileLock(this.path, async () => {
+      const state = readDisk(this.path)
+      if (state.loadError !== undefined) this.loadError = state.loadError
+      const next = structuredClone(state.data)
+      const changed = mutate(next)
+      if (!changed) {
+        this.data = state.data
+        this.signature = state.signature
+        return false
+      }
+      await writeFileAtomic(this.path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, dirMode: 0o700 })
+      this.data = next
+      this.signature = signatureOf(this.path)
+      return true
+    }, {})
   }
 }

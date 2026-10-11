@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,6 +19,8 @@ class FakeUsage extends Service {
   fail: Error | undefined
   /** When set, the next query waits for it. */
   gate: Promise<void> | undefined
+  /** True while a query waits for `gate`. */
+  atGate = false
 
   constructor(ctx: Context) {
     super(ctx, 'tallyUsage')
@@ -26,7 +28,11 @@ class FakeUsage extends Service {
 
   async query(q: UsageQuery): Promise<UsageGroup[]> {
     this.queries.push(q)
-    if (this.gate) await this.gate
+    if (this.gate) {
+      this.atGate = true
+      await this.gate
+      this.atGate = false
+    }
     if (this.fail) throw this.fail
     // Spread over two groups to prove the service sums them.
     const cost = (Object.entries(this.spent) as [Currency, string][]).map(([currency, amount]) => ({ amount, currency }))
@@ -61,7 +67,17 @@ function entry(over: Partial<TallyEntry> = {}): TallyEntry {
 /** Emit a recorded entry, then wait for the evaluation chain to drain. */
 async function record(e: TallyEntry = entry()): Promise<void> {
   ctx.emit('tally/recorded', e)
-  await idle()
+  // Waiting is unbounded when a test holds `usage.gate`; those tests do not use `record`.
+  await settle()
+}
+
+/** Wait until accepted edits are written and every queued evaluation has finished (never with a gated query). */
+const settle = () => (ctx.get('tallyBudget') as unknown as TallyBudget).flush()
+
+/** Wait until an evaluation is blocked on the usage query's gate. */
+async function reachGate(): Promise<void> {
+  for (let i = 0; i < 2000 && !usage.atGate; i++) await new Promise(resolve => setTimeout(resolve, 1))
+  expect(usage.atGate).toBe(true)
 }
 
 const idle = () => new Promise<void>(resolve => setImmediate(resolve))
@@ -174,10 +190,10 @@ describe('TallyBudget', () => {
     usage.gate = new Promise<void>(resolve => { release = resolve })
     usage.spent = { CNY: '12' }
     ctx.emit('tally/recorded', entry())
-    await idle()
+    await reachGate()
     budget.remove('b1')
     release()
-    await idle()
+    await settle()
     expect(alerts).toEqual([])
     expect(BudgetFile.load(path).fired('b1', Date.UTC(2026, 9, 20))).toEqual([])
   })
@@ -189,18 +205,18 @@ describe('TallyBudget', () => {
     usage.gate = new Promise<void>(resolve => { release = resolve })
     usage.spent = { CNY: '8' }
     ctx.emit('tally/recorded', entry())
-    await idle()
+    await reachGate()
     budget.set({ ...daily, limit: { amount: '100', currency: 'CNY' } })
     release()
-    await idle()
+    await settle()
     expect(alerts).toEqual([])
     // Replaced with a lower limit while a query is running: alerts carry the new limit.
     usage.gate = new Promise<void>(resolve => { release = resolve })
     ctx.emit('tally/recorded', entry())
-    await idle()
+    await reachGate()
     budget.set({ ...daily, limit: { amount: '9', currency: 'CNY' } })
     release()
-    await idle()
+    await settle()
     expect(alerts.map(a => [a.threshold, a.limit.amount])).toEqual([[0.8, '9']])
   })
 
@@ -211,10 +227,10 @@ describe('TallyBudget', () => {
     usage.gate = new Promise<void>(resolve => { release = resolve })
     usage.spent = { CNY: '12' }
     ctx.emit('tally/recorded', entry())
-    await idle()
+    await reachGate()
     budget.set({ ...daily, period: 'month' })
     release()
-    await idle()
+    await settle()
     expect(alerts).toEqual([])
   })
 
@@ -259,8 +275,7 @@ describe('TallyBudget', () => {
     budget.set(daily)
     usage.spent = { CNY: '12' }
     for (let i = 0; i < 5; i++) ctx.emit('tally/recorded', entry())
-    await idle()
-    await idle()
+    await settle()
     expect(alerts.map(a => a.threshold)).toEqual([0.8, 1])
   })
 
@@ -269,8 +284,7 @@ describe('TallyBudget', () => {
     budget.set(daily)
     usage.spent = { CNY: '12' }
     for (let i = 0; i < 50; i++) ctx.emit('tally/recorded', entry({ at: T0 + i }))
-    await idle()
-    await idle()
+    await settle()
     expect(usage.queries).toHaveLength(1)
     expect(alerts.map(a => [a.threshold, a.spent])).toEqual([
       [0.8, { amount: '12', currency: 'CNY' }],
@@ -285,14 +299,13 @@ describe('TallyBudget', () => {
     usage.gate = new Promise<void>(resolve => { release = resolve })
     usage.spent = { CNY: '7' }
     ctx.emit('tally/recorded', entry())
-    await idle()
+    await reachGate()
     expect(usage.queries).toHaveLength(1) // the first evaluation is running, blocked on its query
     for (let i = 0; i < 5; i++) ctx.emit('tally/recorded', entry())
     usage.gate = undefined
     usage.spent = { CNY: '12' }
     release()
-    await idle()
-    await idle()
+    await settle()
     // One query for the first entry, one for the five that queued up behind it.
     expect(usage.queries).toHaveLength(2)
     expect(alerts.map(a => a.threshold)).toEqual([0.8, 1])
@@ -305,8 +318,7 @@ describe('TallyBudget', () => {
     ctx.emit('tally/recorded', entry({ at: T0 }))
     ctx.emit('tally/recorded', entry({ at: T0 + DAY }))
     ctx.emit('tally/recorded', entry({ at: T0 + 1 }))
-    await idle()
-    await idle()
+    await settle()
     // Evaluating the newer period first would record its alert and make the older one look stale.
     expect(alerts.map(a => [a.periodStart, a.threshold])).toEqual([
       [Date.UTC(2026, 9, 20), 0.8],
@@ -325,8 +337,7 @@ describe('TallyBudget', () => {
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
     ctx.emit('tally/recorded', entry({ at: T0 }))
     ctx.emit('tally/recorded', entry({ at: T0 + DAY }))
-    await idle()
-    await idle()
+    await settle()
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('boom'))
     expect(alerts.map(a => [a.periodStart, a.threshold])).toEqual([[Date.UTC(2026, 9, 21), 0.8]])
   })
@@ -339,8 +350,7 @@ describe('TallyBudget', () => {
     ctx.emit('tally/recorded', entry({ at: T0 + DAY }))
     ctx.emit('tally/recorded', entry({ at: T0 + 1 }))
     ctx.emit('tally/recorded', entry({ at: T0 + DAY + 1 }))
-    await idle()
-    await idle()
+    await settle()
     expect(usage.queries.map(q => q.from)).toEqual([Date.UTC(2026, 9, 20), Date.UTC(2026, 9, 21)])
     expect(alerts.map(a => [a.periodStart, a.threshold])).toEqual([
       [Date.UTC(2026, 9, 20), 0.8],
@@ -355,8 +365,7 @@ describe('TallyBudget', () => {
     ctx.emit('tally/recorded', entry({ workspaceId: 'w2' }))
     ctx.emit('tally/recorded', entry({ workspaceId: 'w1' }))
     ctx.emit('tally/recorded', entry({ workspaceId: 'w2' }))
-    await idle()
-    await idle()
+    await settle()
     expect(usage.queries).toHaveLength(1)
     expect(alerts.map(a => a.threshold)).toEqual([0.8, 1])
   })
@@ -368,13 +377,12 @@ describe('TallyBudget', () => {
     usage.gate = new Promise<void>(resolve => { release = resolve })
     usage.spent = { CNY: '9' }
     ctx.emit('tally/recorded', entry())
-    await idle()
+    await reachGate()
     ctx.emit('tally/recorded', entry())
-    await idle()
+    await reachGate()
     expect(usage.queries).toHaveLength(1)
     release()
-    await idle()
-    await idle()
+    await settle()
     expect(usage.queries).toHaveLength(2)
     expect(alerts.map(a => a.threshold)).toEqual([0.8])
   })
@@ -484,10 +492,10 @@ describe('TallyBudget', () => {
     budget.set(daily)
     await fiber.dispose()
     usage.spent = { CNY: '12' }
-    await record()
+    ctx.emit('tally/recorded', entry())
+    await budget.flush()
     expect(usage.queries).toEqual([])
     expect(alerts).toEqual([])
-    void budget
   })
 
   describe('set, list, remove, status', () => {
@@ -498,6 +506,7 @@ describe('TallyBudget', () => {
       list[0]!.limit.amount = '1'
       list.pop()
       expect(budget.list()).toEqual([daily])
+      await budget.flush()
       expect(JSON.parse(readFileSync(path, 'utf8')).budgets).toEqual([daily])
     })
 
@@ -511,6 +520,7 @@ describe('TallyBudget', () => {
     it('throws on an invalid budget and leaves the file untouched', async () => {
       const budget = await load()
       budget.set(daily)
+      await budget.flush()
       const before = readFileSync(path, 'utf8')
       expect(() => budget.set({ ...daily, limit: { amount: '0', currency: 'CNY' } })).toThrow(/^tally: invalid budget: .*limit\.amount/)
       expect(() => budget.set({ ...daily, id: '', period: 'week' } as unknown as Budget)).toThrow(/id must be.*; period must be/)
@@ -531,6 +541,7 @@ describe('TallyBudget', () => {
       expect(budget.list()).toHaveLength(1)
       budget.remove('b1')
       expect(budget.list()).toEqual([])
+      await budget.flush()
       expect(BudgetFile.load(path).budgets()).toEqual([])
     })
 
@@ -543,6 +554,21 @@ describe('TallyBudget', () => {
       budget.set(daily)
       await record()
       expect(alerts.map(a => a.threshold)).toEqual([0.8, 0.8])
+    })
+
+    it('shows an edit at once and reverts it, with an error, when the write fails', async () => {
+      const budget = await load()
+      budget.set(daily)
+      await budget.flush()
+      rmSync(path)
+      mkdirSync(path) // the atomic rename onto a directory fails
+      const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+      budget.set({ ...daily, id: 'b2' })
+      expect(budget.list().map(b => b.id)).toEqual(['b1', 'b2'])
+      await budget.flush()
+      expect(budget.list().map(b => b.id)).not.toContain('b2')
+      expect(budget.status().errors.join()).toMatch(/budget file write/)
+      expect(warn).toHaveBeenCalled()
     })
 
     it('reports no errors by default and the load error of a corrupt file', async () => {

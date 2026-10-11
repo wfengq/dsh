@@ -213,6 +213,9 @@ export interface Wallet {
   money: Money
 }
 
+/** Why a balance query failed, as a stable code that does not depend on the message text. */
+export type BalanceErrorCode = 'not-configured' | 'signed-out' | 'timeout' | 'failed'
+
 export interface BalanceSnapshot {
   provider: string
   wallets: Wallet[]
@@ -220,6 +223,8 @@ export interface BalanceSnapshot {
   /** `true` when the last refresh failed and this is the previous successful snapshot. */
   stale: boolean
   error?: string
+  /** Set together with `error`: a code the fetcher supplied, `'timeout'`, or `'failed'` for anything else. */
+  errorCode?: BalanceErrorCode
 }
 
 export type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>

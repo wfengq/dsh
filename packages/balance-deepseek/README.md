@@ -52,7 +52,7 @@ dsh plugin --profile web add dsh-tally dsh-tally-balance-deepseek
 
 ## 查询失败
 
-查询失败时不会显示 0：`dsh-tally` 返回上一次成功的快照并标记 `stale: true`，从未成功过则返回空的 `wallets` 并附带 `error`。常见的错误信息：
+查询失败时不会显示 0：`dsh-tally` 返回上一次成功的快照并标记 `stale: true`，从未成功过则返回空的 `wallets` 并附带 `error`。常见的错误信息（快照里的 `errorCode` 同时给出稳定的错误代码：未配置密钥为 `not-configured`，账号已退出为 `signed-out`，其余为 `failed`，超时由 `dsh-tally` 标为 `timeout`）：
 
 | 错误信息 | 含义 |
 | --- | --- |

@@ -1,6 +1,6 @@
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {
-  BalanceFetcher, BalanceService, BalanceSnapshot, TallyEntry, Wallet,
+  BalanceErrorCode, BalanceFetcher, BalanceService, BalanceSnapshot, TallyEntry, Wallet,
 } from 'dsh-tally-api'
 
 export interface TallyBalanceConfig {
@@ -35,6 +35,14 @@ interface BalanceState {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+const ERROR_CODES: readonly string[] = ['not-configured', 'signed-out', 'timeout', 'failed']
+
+/** A code the fetcher attached to its error, if it is one of ours; anything else is `'failed'`. */
+function errorCodeOf(error: unknown): BalanceErrorCode {
+  const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
+  return typeof code === 'string' && ERROR_CODES.includes(code) ? code as BalanceErrorCode : 'failed'
 }
 
 function sameWallets(a: readonly Wallet[], b: readonly Wallet[]): boolean {
@@ -89,7 +97,13 @@ export class TallyBalance extends Service implements BalanceService {
   async get(route: string): Promise<BalanceSnapshot | null> {
     const entry = this.state.routes.get(route)
     if (entry === undefined) return null
-    return entry.snapshot ?? this.refresh(route)
+    const snap = entry.snapshot
+    // A snapshot that never succeeded is retried once it is older than the minimum interval.
+    const neverSucceeded = snap !== undefined && snap.wallets.length === 0 && snap.error !== undefined
+    if (snap === undefined || (neverSucceeded && Date.now() - snap.fetchedAt > this.config.minIntervalMs)) {
+      return this.refresh(route)
+    }
+    return snap
   }
 
   refresh(route: string): Promise<BalanceSnapshot | null> {
@@ -140,7 +154,9 @@ export class TallyBalance extends Service implements BalanceService {
     const { timeoutMs } = this.config
     const controller = new AbortController()
     const signal = controller.signal
+    let timedOut = false
     const timer = setTimeout(() => {
+      timedOut = true
       controller.abort(new Error(`balance request timed out after ${timeoutMs}ms`))
     }, timeoutMs)
     // Aborts the request when the service is disposed; the route's own dispose aborts `controller` directly.
@@ -167,14 +183,14 @@ export class TallyBalance extends Service implements BalanceService {
       }
       const current = this.state.routes.get(route) === entry
       if (current) entry.inflight = undefined
-      return this.settle(route, entry, current, wallets, error)
+      return this.settle(route, entry, current, wallets, error, timedOut)
     })()
     entry.inflight = { promise, controller }
     return promise
   }
 
   /** Build the snapshot of a finished request; cache and announce it only if the route is still registered. */
-  private settle(route: string, entry: Route, current: boolean, wallets: Wallet[] | undefined, error: unknown): BalanceSnapshot {
+  private settle(route: string, entry: Route, current: boolean, wallets: Wallet[] | undefined, error: unknown, timedOut: boolean): BalanceSnapshot {
     const prev = entry.snapshot
     let snap: BalanceSnapshot
     let changed: boolean
@@ -183,9 +199,12 @@ export class TallyBalance extends Service implements BalanceService {
       changed = prev === undefined || prev.stale || !sameWallets(prev.wallets, wallets)
     } else {
       const message = messageOf(error)
-      snap = prev === undefined
-        ? { provider: route, wallets: [], fetchedAt: Date.now(), stale: true, error: message }
-        : { ...prev, stale: true, error: message }
+      const errorCode = timedOut ? 'timeout' : errorCodeOf(error)
+      // A route that never succeeded has no data to age: its `fetchedAt` is the time of the latest attempt.
+      const neverSucceeded = prev === undefined || (prev.wallets.length === 0 && prev.error !== undefined)
+      snap = neverSucceeded
+        ? { provider: route, wallets: [], fetchedAt: Date.now(), stale: true, error: message, errorCode }
+        : { ...prev, stale: true, error: message, errorCode }
       changed = true
     }
     if (current) {

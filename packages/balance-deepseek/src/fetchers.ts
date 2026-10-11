@@ -22,7 +22,7 @@ export function apiKeyFetcher(opts: ApiKeyFetcherOptions): BalanceFetcher {
   const fetch = opts.fetch ?? globalThis.fetch
   return async (signal) => {
     const key = await opts.resolveKey()
-    if (!key) throw new Error(`${opts.keyName ?? 'DEEPSEEK_API_KEY'} not configured`)
+    if (!key) throw Object.assign(new Error(`${opts.keyName ?? 'DEEPSEEK_API_KEY'} not configured`), { code: 'not-configured' })
 
     let url: URL
     try {
@@ -74,7 +74,7 @@ export function accountFetcher(opts: AccountFetcherOptions): BalanceFetcher {
       locale: 'zh-CN',
       timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
     })
-    if (r === null) throw new Error('DeepSeek account: signed out')
+    if (r === null) throw Object.assign(new Error('DeepSeek account: signed out'), { code: 'signed-out' })
     if (r.status === 'failed') throw new Error('DeepSeek account: balance query failed')
     return parseAccountBalance(r)
   }

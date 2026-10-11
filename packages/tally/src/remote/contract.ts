@@ -143,6 +143,7 @@ const balanceSnapshot = z.object({
   fetchedAt: z.number(),
   stale: z.boolean(),
   error: z.string().optional(),
+  errorCode: z.enum(['not-configured', 'signed-out', 'timeout', 'failed']).optional(),
 }) satisfies z.ZodType<BalanceSnapshot>
 
 /** Structure only: whether the id or the amount are acceptable is the budget service's call (`tally/invalid-budget`). */
@@ -221,9 +222,9 @@ export interface TallyRemoteApi {
   balance: (request: { route: string }) => Promise<RemoteResult<BalanceSnapshot | null>>
   refreshBalance: (request: { route: string }) => Promise<RemoteResult<BalanceSnapshot | null>>
   budgets: () => Promise<RemoteResult<Budget[]>>
-  /** Fails with `tally/invalid-budget` when the budget is not acceptable. */
+  /** Fails with `tally/invalid-budget` when the budget is not acceptable, `tally/write-failed` when the file cannot be written. */
   setBudget: (request: Budget) => Promise<RemoteResult<void>>
-  /** Fails with `tally/not-found` when there is no such budget. */
+  /** Fails with `tally/not-found` when there is no such budget, `tally/write-failed` when the file cannot be written. */
   removeBudget: (request: { id: string }) => Promise<RemoteResult<void>>
   catalog: () => Promise<RemoteResult<CatalogView>>
   peakSavings: (request: { from: number; to: number }) => Promise<RemoteResult<PeakSavings>>
@@ -259,6 +260,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'tally/invalid-budget': {}
     /** The named budget does not exist. */
     'tally/not-found': {}
+    /** The budget file could not be written (for example the writer lock timed out). */
+    'tally/write-failed': {}
   }
 }
 

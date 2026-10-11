@@ -152,25 +152,30 @@ describe('apiKeyFetcher', () => {
   it('throws "not configured" without a key and sends no request', async () => {
     const error = await errorOf(apiKeyFetcher({ baseURL, resolveKey: async () => undefined })(signal()))
     expect(error.message).toBe('DEEPSEEK_API_KEY not configured')
+    expect((error as Error & { code?: string }).code).toBe('not-configured')
     expect(received.path).toBeUndefined()
   })
 
   it('names the configured credential in the "not configured" error', async () => {
     const error = await errorOf(apiKeyFetcher({ baseURL, keyName: 'MY_KEY', resolveKey: async () => undefined })(signal()))
     expect(error.message).toBe('MY_KEY not configured')
+    expect((error as Error & { code?: string }).code).toBe('not-configured')
     expect(error.message).not.toContain('DEEPSEEK_API_KEY')
   })
 
   it('treats an empty key as not configured', async () => {
     const error = await errorOf(apiKeyFetcher({ baseURL, resolveKey: async () => '' })(signal()))
     expect(error.message).toBe('DEEPSEEK_API_KEY not configured')
+    expect((error as Error & { code?: string }).code).toBe('not-configured')
   })
 })
 
 describe('accountFetcher', () => {
   it('throws when signed out', async () => {
     const fetcher = accountFetcher({ getBalance: async () => null, version: '0.2.0-rc.2' })
-    expect((await errorOf(fetcher(signal()))).message).toBe('DeepSeek account: signed out')
+    const error = await errorOf(fetcher(signal()))
+    expect(error.message).toBe('DeepSeek account: signed out')
+    expect((error as Error & { code?: string }).code).toBe('signed-out')
   })
 
   it('throws when the balance query failed', async () => {

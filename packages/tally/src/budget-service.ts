@@ -25,6 +25,12 @@ interface BudgetState {
   /** Recorded entries not yet evaluated; the next link of the chain takes all of them at once. */
   pending: TallyEntry[]
   disposed: boolean
+  /** Budget edits are written one after another through this chain; it never rejects. */
+  writes: Promise<void>
+  /** Edits accepted by `set`/`remove` whose write has not finished; `list()` shows them already. */
+  queued: Array<{ set: Budget } | { remove: string }>
+  /** Why the latest budget write failed; cleared by the next successful write. */
+  writeError: string | undefined
 }
 
 /** Whether two budgets spend over the same period, scope and currency (only the limit amount may differ). */
@@ -60,34 +66,82 @@ export class TallyBudget extends Service implements BudgetService {
       chain: Promise.resolve(),
       pending: [],
       disposed: false,
+      writes: Promise.resolve(),
+      queued: [],
+      writeError: undefined,
     }
 
     // Let an evaluation that is already running finish; queued ones see `disposed` and skip.
     ctx.effect(() => async () => {
       state.disposed = true
       await state.chain
+      await state.writes
     }, 'tallyBudget lifecycle')
 
     ctx.on('tally/recorded', (entry: TallyEntry) => this.onRecorded(entry))
   }
 
+  /** The file's budgets with the edits that are still being written applied on top. */
   list(): Budget[] {
-    return this.state.file.budgets()
+    const budgets = this.state.file.budgets()
+    for (const op of this.state.queued) {
+      if ('set' in op) {
+        const i = budgets.findIndex(x => x.id === op.set.id)
+        if (i >= 0) budgets[i] = structuredClone(op.set)
+        else budgets.push(structuredClone(op.set))
+      } else {
+        const i = budgets.findIndex(x => x.id === op.remove)
+        if (i >= 0) budgets.splice(i, 1)
+      }
+    }
+    return budgets
   }
 
+  /**
+   * `BudgetService.set` and `remove` are synchronous, but the file write takes a cross-process lock
+   * and is asynchronous. The edit is therefore queued: `list()` shows it at once, the write follows in
+   * order, and a failed write is logged and reported by `status().errors` (the edit then disappears
+   * from `list()` again).
+   */
   set(b: Budget): void {
     const errors = validateBudget(b)
     if (errors.length > 0) throw new Error('tally: invalid budget: ' + errors.join('; '))
-    this.state.file.put(b)
+    this.enqueue({ set: structuredClone(b) }, () => this.state.file.put(b))
   }
 
   remove(id: string): void {
-    this.state.file.delete(id)
+    this.enqueue({ remove: id }, async () => { await this.state.file.delete(id) })
+  }
+
+  /** Resolves once every edit accepted so far is written and every queued evaluation has finished. */
+  async flush(): Promise<void> {
+    const state = this.state
+    for (;;) {
+      const { writes, chain } = state
+      await Promise.all([writes, chain])
+      if (state.writes === writes && state.chain === chain) return
+    }
   }
 
   status(): { errors: string[] } {
     const { loadError } = this.state.file
-    return { errors: loadError === undefined ? [] : [`budget file: ${loadError}`] }
+    const errors = loadError === undefined ? [] : [`budget file: ${loadError}`]
+    if (this.state.writeError !== undefined) errors.push(`budget file write: ${this.state.writeError}`)
+    return { errors }
+  }
+
+  private enqueue(op: BudgetState['queued'][number], write: () => Promise<void>): void {
+    const state = this.state
+    state.queued.push(op)
+    state.writes = state.writes.then(write).then(
+      () => { state.writeError = undefined },
+      (error: unknown) => {
+        state.writeError = messageOf(error)
+        this.ctx.logger.warn(`tally: budget file write failed: ${messageOf(error)}`)
+      },
+    ).then(() => {
+      state.queued.splice(state.queued.indexOf(op), 1)
+    })
   }
 
   private onRecorded(entry: TallyEntry): void {
@@ -105,7 +159,9 @@ export class TallyBudget extends Service implements BudgetService {
   private async drain(): Promise<void> {
     const batch = this.state.pending.splice(0)
     if (batch.length === 0) return
-    for (const budget of this.state.file.budgets()) {
+    // Edits made before these entries were recorded must be on disk when the evaluation reads the file.
+    await this.state.writes
+    for (const budget of this.list()) {
       // The latest entry of each period stands for all earlier ones of that period (the query
       // covers them anyway). Older periods go first so a newer period's alert record cannot
       // make an older period's crossing look stale.
@@ -149,7 +205,7 @@ export class TallyBudget extends Service implements BudgetService {
       }
     }
     // The budget may have been removed or replaced while the query was running.
-    const current = this.state.file.budgets().find(b => b.id === budget.id)
+    const current = this.list().find(b => b.id === budget.id)
     if (current === undefined || !sameSelection(current, budget)) return
     const limit = parseAmount(current.limit.amount)
     for (const t of THRESHOLDS) {
@@ -157,7 +213,7 @@ export class TallyBudget extends Service implements BudgetService {
       if (spent.units * t.den < limit.units * t.num) continue
       if (this.state.file.fired(budget.id, start).includes(t.value)) continue
       // Persist first: if emitting fails or the process dies, the alert is never repeated.
-      this.state.file.markFired(budget.id, start, t.value)
+      await this.state.file.markFired(budget.id, start, t.value)
       this.announce({
         budgetId: budget.id,
         threshold: t.value,

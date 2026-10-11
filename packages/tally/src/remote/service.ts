@@ -143,12 +143,22 @@ export class TallyRemote extends TypertRemoteService {
     return this.ctx.tallyBudget.list()
   }
 
+  /** Wait for the queued budget write, so the caller learns about a failed write instead of seeing a silent success. */
+  private async written(id: string, present: boolean): Promise<void> {
+    const budgets = this.ctx.tallyBudget as unknown as { flush?: () => Promise<void> }
+    await budgets.flush?.()
+    if (this.ctx.tallyBudget.list().some(b => b.id === id) !== present) {
+      throw new RemoteError('tally/write-failed', `tally: could not save the budget file: ${this.ctx.tallyBudget.status().errors.join('; ')}`, {})
+    }
+  }
+
   @Remote
   async setBudget(request: unknown): Promise<void> {
     const budget = decode(schemas.setBudget.request, request) as Budget
     const errors = validateBudget(budget)
     if (errors.length > 0) throw new RemoteError('tally/invalid-budget', 'tally: invalid budget: ' + errors.join('; '), {})
     this.ctx.tallyBudget.set(budget)
+    await this.written(budget.id, true)
   }
 
   @Remote
@@ -158,6 +168,7 @@ export class TallyRemote extends TypertRemoteService {
       throw new RemoteError('tally/not-found', `tally: no budget "${id}"`, {})
     }
     this.ctx.tallyBudget.remove(id)
+    await this.written(id, false)
   }
 
   @Remote
