@@ -32,7 +32,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export const inject = ['remote', 'slots', 'locale', 'configForms', 'sidebarRightTabs']
+export const inject = ['remote', 'slots', 'locale', 'configForms']
 
 /** Loader entry id of this plugin, which names its settings namespace. */
 const ENTRY_ID = 'tally-ui'
@@ -130,15 +130,16 @@ export async function apply(ctx: Context): Promise<void> {
     }, BudgetToast))
 
     // The dashboard tab exists only while `elements.sidebarTab` is on: the switch registers and withdraws it.
-    scope.slots.inject(SIDEBAR_TAB, () => {
-      const t = scope.locale.bind(NS)
+    // It needs the right sidebar's registry; a host without it keeps every other element.
+    scope.inject(['sidebarRightTabs'], tabScope => tabScope.slots.inject(SIDEBAR_TAB, () => {
+      const t = tabScope.locale.bind(NS)
       const dashboard: DashboardInjected = { remote }
       let withdraw: (() => void) | undefined
       const sync = () => {
         const wanted = elements.getSnapshot().sidebarTab
         if (wanted && withdraw === undefined) {
-          const unregisterType = scope.sidebarRightTabs.register(tabDefinition(t))
-          const unregisterBody = scope.slots.register({
+          const unregisterType = tabScope.sidebarRightTabs.register(tabDefinition(t))
+          const unregisterBody = tabScope.slots.register({
             name: SIDEBAR_TAB,
             key: TAB_ID,
             locale: NS,
@@ -153,6 +154,6 @@ export async function apply(ctx: Context): Promise<void> {
       sync()
       const unsubscribe = elements.subscribe(sync)
       return () => { unsubscribe(); withdraw?.(); withdraw = undefined }
-    })
+    }))
   })
 }

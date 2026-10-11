@@ -29,8 +29,7 @@
         "remote",
         "slots",
         "locale",
-        "configForms",
-        "sidebarRightTabs"
+        "configForms"
       ]
     },
     "bundle": {

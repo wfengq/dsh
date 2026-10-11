@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PeakSavings, TallyTokens, UsageGroup, UsageQuery } from 'dsh-tally-api'
 import { Dashboard } from '../src/client/dashboard/Dashboard.tsx'
 import type { DashboardRemote } from '../src/client/dashboard/data.ts'
@@ -63,6 +63,10 @@ async function settle() {
   await act(async () => { await vi.advanceTimersByTimeAsync(0) })
 }
 
+const ZONE = process.env.TZ
+// Whole-day spans are only exact in a zone without DST; pin one for the module.
+beforeAll(() => { process.env.TZ = 'UTC' })
+afterAll(() => { if (ZONE === undefined) delete process.env.TZ; else process.env.TZ = ZONE })
 beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
 

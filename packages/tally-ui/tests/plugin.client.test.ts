@@ -21,7 +21,7 @@ interface Registration {
  * outside the dsh repository (its entry imports unshipped renderer sources), so this records what
  * the plugin asks of `slots`, `locale`, `remote` and `configForms`.
  */
-function fakeContext() {
+function fakeContext(options: { sidebar?: boolean } = {}) {
   const disposers: (() => unknown)[] = []
   const registrations: Registration[] = []
   const tabTypes: { id: string; kind: string; title: () => string; guide?: { id: string; order: number }[] }[] = []
@@ -87,7 +87,10 @@ function fakeContext() {
       },
     },
     effect: (fn: () => unknown) => { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose as () => unknown) },
-    inject: (_deps: string[], fn: (scope: unknown) => void) => { fn(ctx) },
+    inject: (deps: string[], fn: (scope: unknown) => void) => {
+      const present = (dep: string) => dep !== 'sidebarRightTabs' || options.sidebar !== false
+      if (deps.every(present)) fn(ctx)
+    },
   }
   return { ctx, registrations, tabTypes, live, setElements, injected, disposers, remote, stream, tally, form, accepted }
 }
@@ -116,7 +119,7 @@ describe('dsh-tally-ui browser plugin', () => {
   it('registers the dashboard tab type and its body, and withdraws both when the switch goes off', async () => {
     const { ctx, registrations, tabTypes, live, setElements } = fakeContext()
     await apply(ctx as never)
-    expect(inject).toContain('sidebarRightTabs')
+    expect(inject).not.toContain('sidebarRightTabs')
     expect(tabTypes).toHaveLength(1)
     expect(tabTypes[0]).toMatchObject({ id: 'tally.dashboard', kind: 'tally.dashboard', guide: [{ id: 'tally.dashboard', order: 50 }] })
     expect(tabTypes[0]!.title()).toBe('tab.title')
@@ -128,6 +131,13 @@ describe('dsh-tally-ui browser plugin', () => {
     expect(live).toEqual({ bodies: 0, types: 0 })
     setElements({ sidebarTab: true })
     expect(live).toEqual({ bodies: 1, types: 1 })
+  })
+
+  it('keeps the conversation elements when the host has no right sidebar', async () => {
+    const { ctx, registrations, live } = fakeContext({ sidebar: false })
+    await apply(ctx as never)
+    expect(registrations.map(r => r.id).filter(Boolean).sort()).toEqual(['tally.budget', 'tally.dock', 'tally.total', 'tally.turn'])
+    expect(live).toEqual({ bodies: 0, types: 0 })
   })
 
   it('never registers the dashboard tab when its switch is off from the start', async () => {
