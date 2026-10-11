@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BalanceSnapshot, BandView, BudgetAlert, CatalogView, SessionView, TallyEntry, TallyStatusView, TurnUsage, UsageGroup } from 'dsh-tally-api'
+import type { BalanceSnapshot, BandView, Budget, BudgetAlert, CatalogView, SessionView, TallyEntry, TallyStatusView, TurnUsage, UsageGroup } from 'dsh-tally-api'
 import { BudgetToast } from '../src/client/BudgetToast.tsx'
 import { CostDock } from '../src/client/CostDock.tsx'
 import { type Elements, ALL_ELEMENTS } from '../src/client/elements.ts'
@@ -158,14 +158,19 @@ const catalogView: CatalogView = {
 const turnLocation = { start: { seq: 4 }, end: { seq: 9 } }
 
 function turnProps(usage: TurnUsage | null, extra: { elements?: Partial<Elements> } = {}) {
+  const generation = observable(1)
+  const today = observable<UsageGroup | null>(null)
   return {
     turn: turnLocation,
     sessionId: 's1',
     useElements: hookOf(observable<Elements>({ ...ALL_ELEMENTS, ...extra.elements })),
-    useToday: hookOf(observable<UsageGroup | null>(null)),
-    loadTurn: vi.fn(async () => usage),
+    useToday: hookOf(today),
+    useGeneration: hookOf(generation),
+    loadTurn: vi.fn(async (_request: { sessionId: string; fromSeq: number; toSeq: number }): Promise<TurnUsage | null> => usage),
     catalog: vi.fn(async () => catalogView),
     t,
+    generation,
+    today,
   }
 }
 
@@ -187,6 +192,40 @@ describe('TurnCost', () => {
     const link = card.querySelector('a[data-tally="price-source"]')
     expect(link?.getAttribute('href')).toBe('https://example.com/pricing')
     expect(link?.textContent).toBe('deepseek-2026-09')
+  })
+
+  it('asks again on every hello and shows the new price of a turn that had entries', async () => {
+    const props = turnProps({ total: group([cny('0.004')]), attempts: [attempt()] })
+    render(<TurnCost {...props} />)
+    await settle()
+    expect(document.querySelector('[data-tally="turn"]')?.textContent).toContain('¥0.004')
+    expect(props.loadTurn).toHaveBeenCalledTimes(1)
+    expect(props.catalog).toHaveBeenCalledTimes(1)
+    // Recorded usage elsewhere does not refetch a turn that is already shown.
+    act(() => { props.today.set(group([cny('9')])) })
+    await settle()
+    expect(props.loadTurn).toHaveBeenCalledTimes(1)
+    // A hello (say, after a price override was saved and the ledger repriced) does.
+    props.loadTurn.mockImplementation(async () => ({ total: group([cny('0.008')]), attempts: [attempt({ cost: cny('0.008'), priceVersion: 'manual:deepseek' })] }))
+    act(() => { props.generation.set(2) })
+    await settle()
+    expect(props.loadTurn).toHaveBeenCalledTimes(2)
+    expect(props.catalog).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[data-tally="turn"]')?.textContent).toContain('¥0.008')
+    await settle()
+    expect(props.loadTurn).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps asking on recorded usage until the turn has entries', async () => {
+    const props = turnProps({ total: group([], { requestCount: 0 }), attempts: [] })
+    const { container } = render(<TurnCost {...props} />)
+    await settle()
+    expect(container.innerHTML).toBe('')
+    props.loadTurn.mockImplementation(async () => ({ total: group([cny('0.002')]), attempts: [attempt()] }))
+    act(() => { props.today.set(group([cny('1')])) })
+    await settle()
+    expect(props.loadTurn).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[data-tally="turn"]')?.textContent).toContain('¥0.002')
   })
 
   it('renders nothing for a turn without entries', async () => {
@@ -234,31 +273,41 @@ describe('SessionTotal', () => {
 })
 
 describe('BudgetToast', () => {
-  const alert80: BudgetAlert = { budgetId: 'daily', threshold: 0.8, spent: cny('8.5'), limit: cny('10'), periodStart: 0 }
-
-  it('shows the 80% alert with both amounts and dismisses it when the toast is done', async () => {
-    const dismissAlert = vi.fn()
-    render(<BudgetToast
+  const ID = '6f1c2a9e-0d4b-4a51-9f3e-2b7c8d9e0f12'
+  const alert80: BudgetAlert = { budgetId: ID, threshold: 0.8, spent: cny('8.5'), limit: cny('10'), periodStart: 0 }
+  const daily: Budget = { id: ID, period: 'day', scope: {}, limit: cny('10') }
+  const toast = (alerts: readonly BudgetAlert[], budgets: readonly Budget[] | null = [daily], dismissAlert = vi.fn()) => (
+    <BudgetToast
       useElements={hookOf(observable<Elements>(ALL_ELEMENTS))}
-      useAlerts={hookOf(observable<readonly BudgetAlert[]>([alert80]))}
+      useAlerts={hookOf(observable<readonly BudgetAlert[]>(alerts))}
+      useBudgets={hookOf(observable<readonly Budget[] | null>(budgets))}
       dismissAlert={dismissAlert}
       t={t}
-    />)
+    />
+  )
+
+  it('shows the 80% alert with both amounts, names the budget by its description, and dismisses it when the toast is done', async () => {
+    const dismissAlert = vi.fn()
+    render(toast([alert80], [daily], dismissAlert))
     const text = screen.getByRole('status').textContent
     expect(text).toContain('¥8.5')
     expect(text).toContain('¥10')
-    expect(text).toContain('daily')
+    expect(text).toContain(t('budget.name', { period: zh['budget.day'], limit: '¥10' }))
+    expect(text).not.toContain(ID)
     fireEvent.click(screen.getByTestId('toast-done'))
     expect(dismissAlert).toHaveBeenCalledWith(alert80)
   })
 
-  it('uses the used-up copy at 100%', () => {
-    render(<BudgetToast
-      useElements={hookOf(observable<Elements>(ALL_ELEMENTS))}
-      useAlerts={hookOf(observable<readonly BudgetAlert[]>([{ ...alert80, threshold: 1, spent: cny('10.2') }]))}
-      dismissAlert={vi.fn()}
-      t={t}
-    />)
-    expect(screen.getByRole('status').textContent).toBe(t('alert.reached100', { budget: 'daily', spent: '¥10.2', limit: '¥10' }) + 'done')
+  it('uses the used-up copy at 100% and names a workspace budget with its workspace', () => {
+    const monthly: Budget = { id: ID, period: 'month', scope: { workspaceId: 'ws-a' }, limit: cny('10') }
+    render(toast([{ ...alert80, threshold: 1, spent: cny('10.2') }], [monthly]))
+    const budget = t('budget.nameWorkspace', { period: zh['budget.month'], limit: '¥10', workspace: 'ws-a' })
+    expect(screen.getByRole('status').textContent).toBe(t('alert.reached100', { budget, spent: '¥10.2', limit: '¥10' }) + 'done')
+  })
+
+  it('falls back to the period-less name for a budget it does not know', () => {
+    render(toast([alert80], null))
+    const budget = t('budget.name', { period: zh['budget.any'], limit: '¥10' })
+    expect(screen.getByRole('status').textContent).toBe(t('alert.reached80', { budget, spent: '¥8.5', limit: '¥10' }) + 'done')
   })
 })

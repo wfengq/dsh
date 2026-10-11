@@ -15,7 +15,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { CatalogView, TallyWatchFrame } from 'dsh-tally-api'
-import TALLY_REMOTE, { type TallyRemoteApi } from 'dsh-tally/remote'
+import { mountTallyRemote, type TallyRemoteApi } from 'dsh-tally/remote'
 import { BudgetToast, type BudgetToastInjected } from './BudgetToast.tsx'
 import { CostDock, type CostDockInjected } from './CostDock.tsx'
 import { Dashboard, type DashboardInjected } from './dashboard/Dashboard.tsx'
@@ -64,8 +64,9 @@ async function* framesOf(stream: AsyncIterable<{ value: TallyWatchFrame; accept(
 }
 
 export async function apply(ctx: Context): Promise<void> {
-  // `$mount` owns its effect on this fiber: unloading the plugin withdraws the namespace.
-  await ctx.remote.$mount(TALLY_REMOTE)
+  // `$mount` owns its effect on this fiber: unloading the plugin withdraws the namespace. Another
+  // client plugin may have mounted it first; the helper treats that as success.
+  await mountTallyRemote(ctx)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-tally-ui: dictionaries')
   const elements = elementsOf(ctx.configForms.get<ElementsFormSnapshot['value']>(ENTRY_ID))
 
@@ -84,12 +85,15 @@ export async function apply(ctx: Context): Promise<void> {
       return stream.dispose()
     }, 'dsh-tally-ui: watch stream')
 
-    let catalog: Promise<CatalogView | null> | undefined
+    // The catalog is cached per `hello` generation: a `hello` may follow a change of the price overrides.
+    let catalog: { generation: number; pending: Promise<CatalogView | null> } | undefined
     const loadCatalog = () => {
-      const pending = catalog ??= valueOf(remote.catalog())
+      const generation = store.generation.getSnapshot()
+      if (catalog === undefined || catalog.generation !== generation) catalog = { generation, pending: valueOf(remote.catalog()) }
+      const entry = catalog
       // A failed load is retried by the next caller.
-      void pending.then((view) => { if (view === null && catalog === pending) catalog = undefined })
-      return pending
+      void entry.pending.then((view) => { if (view === null && catalog === entry) catalog = undefined })
+      return entry.pending
     }
     const band: CostDockInjected['band'] = request => valueOf(remote.band(request))
     const loadTurn: TurnCostInjected['loadTurn'] = request => valueOf(remote.turn(request))
@@ -113,7 +117,7 @@ export async function apply(ctx: Context): Promise<void> {
       id: 'tally.turn',
       order: 50,
       locale: NS,
-      inject: (): TurnCostInjected => ({ hooks: { elements, today: store.today }, loadTurn, catalog: loadCatalog }),
+      inject: (): TurnCostInjected => ({ hooks: { elements, today: store.today, generation: store.generation }, loadTurn, catalog: loadCatalog }),
     }, TurnCost))
 
     scope.slots.inject(UTILITIES, () => scope.slots.register({
@@ -128,7 +132,7 @@ export async function apply(ctx: Context): Promise<void> {
       name: OVERLAY,
       id: 'tally.budget',
       locale: NS,
-      inject: (): BudgetToastInjected => ({ hooks: { elements, alerts: store.alerts }, dismissAlert }),
+      inject: (): BudgetToastInjected => ({ hooks: { elements, alerts: store.alerts, budgets: store.budgets }, dismissAlert }),
     }, BudgetToast))
 
     scope.slots.inject(SETTINGS_SECTION, () => {
@@ -138,6 +142,7 @@ export async function apply(ctx: Context): Promise<void> {
         overridesForm: scope.configForms.get<never>('tally'),
         elementsForm: scope.configForms.get<never>(ENTRY_ID),
         status: store.status,
+        generation: store.generation,
       }
       return scope.slots.register({
         name: SETTINGS_SECTION,
@@ -153,7 +158,7 @@ export async function apply(ctx: Context): Promise<void> {
     // It needs the right sidebar's registry; a host without it keeps every other element.
     scope.inject(['sidebarRightTabs'], tabScope => tabScope.slots.inject(SIDEBAR_TAB, () => {
       const t = tabScope.locale.bind(NS)
-      const dashboard: DashboardInjected = { remote }
+      const dashboard: DashboardInjected = { remote, generation: store.generation, recorded: store.recorded }
       let withdraw: (() => void) | undefined
       const sync = () => {
         const wanted = elements.getSnapshot().sidebarTab

@@ -31,7 +31,7 @@ const element = (description: string) => Schema.boolean().default(true).volatile
 
 export const Config: Schema<ConfigInput, Config> = Schema.object({
   elements: Schema.object({
-    composerDock: element('在输入框上方显示费用条'),
+    composerDock: element('在输入框下方显示费用条'),
     turnTail: element('在每轮回复末尾显示这一轮的费用'),
     headerUtilities: element('在会话头部显示会话累计费用'),
     sidebarTab: element('在右侧栏显示用量看板'),

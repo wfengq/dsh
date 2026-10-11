@@ -1,5 +1,5 @@
 import { HoverCard } from '@deepseek-ai/dsh-client-ui-primitives'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogView, TallyEntry, TurnUsage, UsageGroup } from 'dsh-tally-api'
 import type { Elements } from './elements.ts'
@@ -14,10 +14,12 @@ export interface TurnCostInjected {
     elements: Snapshot<Elements>
     /** Changes whenever new entries were recorded; a turn whose entries were not there yet asks again. */
     today: Snapshot<UsageGroup | null>
+    /** The store's `hello` count: prices or the ledger may have changed, so a shown turn asks again. */
+    generation: Snapshot<number>
   }
   /** The `tally/turn` call; `null` when it failed. */
   loadTurn: (request: { sessionId: string; fromSeq: number; toSeq: number }) => Promise<TurnUsage | null>
-  /** The price catalog, cached by the plugin; `null` when unavailable. */
+  /** The price catalog, cached by the plugin per `hello` generation; `null` when unavailable. */
   catalog: () => Promise<CatalogView | null>
 }
 
@@ -36,9 +38,12 @@ export type TurnCostProps = TurnRange & InjectFace<TurnCostInjected> & { t: T }
  * Cost of one finished turn at its tail, with token, cache and price details on hover. Renders
  * nothing for a turn that has not ended or has no entries.
  */
-export function TurnCost({ turn, sessionId, useElements, useToday, loadTurn, catalog, t }: TurnCostProps): ReactNode {
+export function TurnCost({ turn, sessionId, useElements, useToday, useGeneration, loadTurn, catalog, t }: TurnCostProps): ReactNode {
   const enabled = useElements((e: Elements) => e.turnTail)
   const recorded = useToday((s: UsageGroup | null) => s)
+  const generation = useGeneration((g: number) => g)
+  /** Generation of the shown usage; a newer one refetches it. */
+  const shownGeneration = useRef<number | undefined>(undefined)
   const fromSeq = turn.start?.seq
   const toSeq = turn.end?.seq
   const [usage, setUsage] = useState<TurnUsage | null>(null)
@@ -46,22 +51,28 @@ export function TurnCost({ turn, sessionId, useElements, useToday, loadTurn, cat
   const found = usage !== null && usage.attempts.length > 0
 
   useEffect(() => {
-    if (!enabled || fromSeq === undefined || toSeq === undefined || found) return
+    if (!enabled || fromSeq === undefined || toSeq === undefined) return
+    // A shown turn only asks again for a new generation; `recorded` re-asks while the entries have not arrived.
+    if (found && shownGeneration.current === generation) return
     let live = true
+    const asked = generation
     loadTurn({ sessionId, fromSeq, toSeq }).then(
-      (next) => { if (live && next !== null) setUsage(next) },
+      (next) => {
+        if (!live || next === null) return
+        shownGeneration.current = asked
+        setUsage(next)
+      },
       () => {},
     )
     return () => { live = false }
-    // `recorded` only re-asks while the turn's entries have not arrived.
-  }, [enabled, sessionId, fromSeq, toSeq, loadTurn, found, found ? null : recorded])
+  }, [enabled, sessionId, fromSeq, toSeq, loadTurn, found, generation, found ? null : recorded])
 
   useEffect(() => {
     if (!found) return
     let live = true
     catalog().then((view) => { if (live) setSources(view) }, () => {})
     return () => { live = false }
-  }, [found, catalog])
+  }, [found, catalog, generation])
 
   if (!enabled || fromSeq === undefined || toSeq === undefined || !found) return null
   const rate = hitRate(usage.total.tokens)

@@ -55,6 +55,7 @@ function mount(options: {
   const overrides = fakeForm(options.overrides)
   const elements = fakeForm({ value: { elements: {} }, ...options.elements })
   const status = observable<TallyStatusView | null>(options.status ?? null)
+  const generation = observable(1)
   const remote = {
     catalog: vi.fn(async () => ok(catalog)),
     budgets: vi.fn(async () => ok(options.budgets ?? [])),
@@ -62,9 +63,9 @@ function mount(options: {
     removeBudget: vi.fn(async () => ok(undefined)),
     rebuild: vi.fn(async () => ok(undefined)),
   }
-  const props = { remote, overridesForm: overrides, elementsForm: elements, status, close: () => {}, t } as unknown as SectionProps
+  const props = { remote, overridesForm: overrides, elementsForm: elements, status, generation, close: () => {}, t } as unknown as SectionProps
   const view = render(<Section {...props} />)
-  return { overrides, elements, status, remote, ...view }
+  return { overrides, elements, status, generation, remote, ...view }
 }
 
 const label = (key: keyof typeof zh) => zh[key]
@@ -95,7 +96,7 @@ describe('catalog source links', () => {
       providers: [{ ...catalog.providers[0]!, models: [{ ...catalog.providers[0]!.models[0]!, source: { url: 'javascript:alert(1)', retrievedAt: 'x' } }] }],
     }))
     cleanup()
-    render(<Section {...({ remote: mounted.remote, overridesForm: mounted.overrides, elementsForm: mounted.elements, status: mounted.status, close: () => {}, t } as unknown as SectionProps)} />)
+    render(<Section {...({ remote: mounted.remote, overridesForm: mounted.overrides, elementsForm: mounted.elements, status: mounted.status, generation: mounted.generation, close: () => {}, t } as unknown as SectionProps)} />)
     await screen.findByText('deepseek-chat')
     expect(screen.queryByRole('link')).toBeNull()
   })
@@ -211,6 +212,8 @@ describe('budgets editor', () => {
     const budget: Budget = { id: 'b1', period: 'day', scope: { workspaceId: 'w1' }, limit: { amount: '5', currency: 'USD' } }
     const view = mount({ budgets: [budget] })
     const row = await screen.findByText(/w1/)
+    expect(row.textContent).toBe(t('budget.nameWorkspace', { period: zh['budget.day'], limit: '$5', workspace: 'w1' }))
+    expect(row.textContent).not.toContain('b1')
     fireEvent.click(within(row.closest('li')!).getByRole('button', { name: label('settings.remove') }))
     await waitFor(() => { expect(view.remote.removeBudget).toHaveBeenCalledWith({ id: 'b1' }) })
   })
@@ -251,7 +254,7 @@ describe('element switches', () => {
       removeBudget: vi.fn(async () => ok(undefined)),
       rebuild: vi.fn(async () => ok(undefined)),
     }
-    render(<Section {...({ remote, overridesForm: new ClassForm(), elementsForm: new ClassForm(), status, close: () => {}, t } as unknown as SectionProps)} />)
+    render(<Section {...({ remote, overridesForm: new ClassForm(), elementsForm: new ClassForm(), status, generation: observable(1), close: () => {}, t } as unknown as SectionProps)} />)
     const toggle = await screen.findByRole('switch', { name: label('settings.element.turnTail') })
     expect(toggle.getAttribute('aria-checked')).toBe('false')
   })
@@ -314,5 +317,56 @@ describe('rebuild', () => {
     act(() => { view.status.set(statusView(null)) })
     expect(button.disabled).toBe(false)
     expect(screen.queryByText(/正在重建/)).toBeNull()
+  })
+})
+
+describe('problems', () => {
+  const withProblems = (patch: Partial<TallyStatusView>, usageErrors: TallyStatusView['usage']['errors'] = []): TallyStatusView => ({
+    ...statusView(null), usage: { backfill: null, errors: usageErrors }, ...patch,
+  })
+
+  it('renders nothing without problems', async () => {
+    mount({ status: statusView(null) })
+    await screen.findByText(t('settings.catalogVersion', { version: catalog.version }))
+    expect(document.querySelector('[data-tally="problems"]')).toBeNull()
+  })
+
+  it('lists session, ledger, pricing and budget problems, with a rebuild hint for ledger errors', async () => {
+    mount({
+      status: withProblems(
+        { pricingErrors: ['override for "acme" ignored'], budgetErrors: ['budget file: unsupported budget file format'] },
+        [{ sessionId: 's-9', message: 'unsupported log version' }, { message: 'database disk image is malformed' }],
+      ),
+    })
+    const items = [...document.querySelectorAll('[data-tally="problem"]')].map(n => n.textContent)
+    expect(items).toEqual([
+      t('settings.problem.item', { source: t('settings.problem.session', { session: 's-9' }), message: 'unsupported log version' }),
+      t('settings.problem.item', { source: zh['settings.problem.usage'], message: 'database disk image is malformed' }),
+      t('settings.problem.item', { source: zh['settings.problem.pricing'], message: 'override for "acme" ignored' }),
+      t('settings.problem.item', { source: zh['settings.problem.budget'], message: 'budget file: unsupported budget file format' }),
+    ])
+    expect(document.querySelector('[data-tally="rebuild-hint"]')?.textContent).toBe(zh['settings.problem.rebuildHint'])
+  })
+
+  it('gives no rebuild hint for session-only problems and drops problems once fixed', async () => {
+    const view = mount({ status: withProblems({ budgetErrors: ['budget file: bad'] }, [{ sessionId: 's-1', message: 'x' }]) })
+    expect(document.querySelectorAll('[data-tally="problem"]')).toHaveLength(2)
+    expect(document.querySelector('[data-tally="rebuild-hint"]')).toBeNull()
+    act(() => { view.status.set(statusView(null)) })
+    expect(document.querySelector('[data-tally="problems"]')).toBeNull()
+  })
+})
+
+describe('hello generation', () => {
+  it('reads the catalog and the budgets again on a new hello', async () => {
+    const view = mount()
+    await screen.findByText(t('settings.catalogVersion', { version: catalog.version }))
+    await waitFor(() => { expect(view.remote.budgets).toHaveBeenCalledTimes(1) })
+    expect(view.remote.catalog).toHaveBeenCalledTimes(1)
+    view.remote.catalog.mockImplementation(async () => ok({ ...catalog, version: '2026-11-01' }))
+    act(() => { view.generation.set(2) })
+    await screen.findByText(t('settings.catalogVersion', { version: '2026-11-01' }))
+    expect(view.remote.catalog).toHaveBeenCalledTimes(2)
+    await waitFor(() => { expect(view.remote.budgets).toHaveBeenCalledTimes(2) })
   })
 })

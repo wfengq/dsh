@@ -13,7 +13,7 @@ export const zh = {
 
   'money.unpriced': '未定价',
   'balance.stale': '已过期',
-  'balance.notConfigured': '未配置账号',
+  'balance.notConfigured': '未配置 DeepSeek 账号，请在 dsh 设置中配置',
   'balance.signedOut': '未登录',
   'balance.failed': '查询失败：{reason}',
   'balance.refresh': '点击刷新余额',
@@ -59,6 +59,8 @@ export const zh = {
   'tab.hitRateLabel': '每日缓存命中率折线图',
   'tab.savingsFact': '本期高峰时段费用 {peak}，同样用量在空闲时段为 {offpeak}',
   'tab.unpricedHint': '可在 设置 → {nav} → {overrides} 中补充价格',
+  'tab.rangeTotal': '合计 {total}',
+  'tab.barTitle': '{day} · {band} · {amount}',
 
   'settings.nav': '用量与费用',
   'settings.catalog': '价格目录',
@@ -105,8 +107,6 @@ export const zh = {
   'settings.budget.workspace': '工作区（可选）',
   'settings.budget.amount': '金额',
   'settings.budget.add': '添加预算',
-  'settings.budget.allWorkspaces': '全部工作区',
-  'settings.budget.summary': '{period} · {workspace} · {limit}',
   'settings.element.composerDock': '输入框下方的费用条',
   'settings.element.turnTail': '每轮对话的费用',
   'settings.element.headerUtilities': '会话标题栏的累计费用',
@@ -115,9 +115,22 @@ export const zh = {
   'settings.rebuildAction': '重建',
   'settings.rebuildConfirm': '将根据会话日志重新生成全部用量记录，可能需要一些时间。确定重建吗？',
   'settings.rebuildFailed': '重建未能开始，请稍后重试',
+  'settings.problems': '问题',
+  'settings.problem.item': '{source}：{message}',
+  'settings.problem.session': '会话 {session} 的日志无法读取，已跳过',
+  'settings.problem.usage': '账本',
+  'settings.problem.pricing': '价格覆盖',
+  'settings.problem.budget': '预算文件',
+  'settings.problem.rebuildHint': '账本可能已损坏。账本可以从会话日志完整重建，请使用下方的“重建账本”。',
 
-  'alert.reached80': '预算“{budget}”已用 80%（{spent} / {limit}）',
-  'alert.reached100': '预算“{budget}”已用尽（{spent} / {limit}）',
+  'budget.day': '每日预算',
+  'budget.month': '每月预算',
+  'budget.any': '预算',
+  'budget.name': '{period} · {limit}',
+  'budget.nameWorkspace': '{period} · {limit} · {workspace}',
+
+  'alert.reached80': '“{budget}”已用 80%（{spent} / {limit}）',
+  'alert.reached100': '“{budget}”已用尽（{spent} / {limit}）',
 
   disclaimer: '估算值，以账单为准',
 } as const
@@ -134,7 +147,7 @@ export const en: Record<keyof typeof zh, string> = {
 
   'money.unpriced': 'Unpriced',
   'balance.stale': 'Stale',
-  'balance.notConfigured': 'Account not configured',
+  'balance.notConfigured': 'DeepSeek account not configured; set it up in the dsh settings',
   'balance.signedOut': 'Signed out',
   'balance.failed': 'Lookup failed: {reason}',
   'balance.refresh': 'Click to refresh the balance',
@@ -180,6 +193,8 @@ export const en: Record<keyof typeof zh, string> = {
   'tab.hitRateLabel': 'Line chart of the daily cache hit rate',
   'tab.savingsFact': 'Peak-hour cost this period was {peak}; the same usage at off-peak prices would be {offpeak}',
   'tab.unpricedHint': 'Add prices under Settings → {nav} → {overrides}',
+  'tab.rangeTotal': 'Total {total}',
+  'tab.barTitle': '{day} · {band} · {amount}',
 
   'settings.nav': 'Usage and cost',
   'settings.catalog': 'Price catalog',
@@ -226,8 +241,6 @@ export const en: Record<keyof typeof zh, string> = {
   'settings.budget.workspace': 'Workspace (optional)',
   'settings.budget.amount': 'Amount',
   'settings.budget.add': 'Add budget',
-  'settings.budget.allWorkspaces': 'All workspaces',
-  'settings.budget.summary': '{period} · {workspace} · {limit}',
   'settings.element.composerDock': 'Cost bar under the composer',
   'settings.element.turnTail': 'Cost of each turn',
   'settings.element.headerUtilities': 'Session total in the header',
@@ -236,9 +249,22 @@ export const en: Record<keyof typeof zh, string> = {
   'settings.rebuildAction': 'Rebuild',
   'settings.rebuildConfirm': 'This regenerates all usage records from the session logs and may take a while. Rebuild now?',
   'settings.rebuildFailed': 'Could not start the rebuild, please try again',
+  'settings.problems': 'Problems',
+  'settings.problem.item': '{source}: {message}',
+  'settings.problem.session': 'The log of session {session} could not be read and was skipped',
+  'settings.problem.usage': 'Ledger',
+  'settings.problem.pricing': 'Price overrides',
+  'settings.problem.budget': 'Budget file',
+  'settings.problem.rebuildHint': 'The ledger may be damaged. It can be rebuilt completely from the session logs: use "Rebuild ledger" below.',
 
-  'alert.reached80': 'Budget "{budget}" is 80% used ({spent} / {limit})',
-  'alert.reached100': 'Budget "{budget}" is used up ({spent} / {limit})',
+  'budget.day': 'Daily budget',
+  'budget.month': 'Monthly budget',
+  'budget.any': 'Budget',
+  'budget.name': '{period} · {limit}',
+  'budget.nameWorkspace': '{period} · {limit} · {workspace}',
+
+  'alert.reached80': '"{budget}" is 80% used ({spent} / {limit})',
+  'alert.reached100': '"{budget}" is used up ({spent} / {limit})',
 
   disclaimer: 'Estimate; the bill is authoritative',
 }

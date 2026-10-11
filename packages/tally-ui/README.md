@@ -20,16 +20,16 @@ dsh plugin --profile web add dsh-tally dsh-tally-ui
 
 | 位置 | 元素 | 内容 | 截图 |
 | --- | --- | --- | --- |
-| 输入框下方 | 费用条（`composerDock`） | 本会话费用（有记录后才出现）、今日费用、余额、当前价格时段和距下次变化的倒计时。点击余额立即刷新；刷新失败时继续显示上一次的余额并标注“已过期”，从未成功过时显示失败原因 | `01-conversation.png`、`03-balance.png`、`04-balance-stale.png` |
-| 每轮回复末尾 | 本轮费用（`turnTail`） | 这一轮的费用。鼠标悬停显示输入、缓存命中、输出 token、缓存命中率、请求次数（含重试）和价格版本（链接到价格来源） | `01-conversation.png`、`02-turn-details.png` |
+| 输入框下方 | 费用条（`composerDock`） | 本会话费用（有记录后才出现）、今日费用、余额、当前价格时段和距下次变化的倒计时。点击余额立即刷新；刷新失败时继续显示上一次的余额并标注“已过期”，从未成功过时显示失败原因（未配置账号时提示到 dsh 设置里配置 DeepSeek）。“今日”在本地午夜自动切换到新的一天 | `01-conversation.png`、`03-balance.png`、`04-balance-stale.png` |
+| 每轮回复末尾 | 本轮费用（`turnTail`） | 这一轮的费用。鼠标悬停显示输入、缓存命中、输出 token、缓存命中率、请求次数（含重试，即这一轮发出的全部请求）和价格版本（链接到价格来源）。修改价格覆盖或重建账本后自动刷新为新的价格 | `01-conversation.png`、`02-turn-details.png` |
 | 会话标题栏右侧 | 会话累计（`headerUtilities`） | 本会话（含子代理）的累计费用；点击展开每个子代理会话的费用 | `01-conversation.png` |
-| 右侧栏 | 用量看板（`sidebarTab`） | 在右侧栏的“添加标签页”导引里选择“用量”打开。可选今天、近 7 天、近 30 天、本月；包括每日费用堆叠柱状图（高峰 / 空闲）、缓存命中率趋势、按模型 / 工作区 / 会话排行（已删除的会话单独标注）、低谷时段节省、未定价请求提示，以及“导出 CSV” | `05-dashboard.png` |
-| 设置 → 用量与费用 | 设置页（始终显示） | 价格目录版本和每个模型的价格版本、价格覆盖编辑（别名 / 自定义价格）、预算（按日 / 按月，可限定工作区）、界面元素开关、重建账本 | `06-settings-budget.png`、`08-settings-elements.png` |
-| 页面顶部浮层 | 预算提醒（`budgetToast`） | 预算达到 80% 或 100% 时弹出提示，约 8 秒后自动消失；多条提醒依次显示 | `07-budget-toast.png` |
+| 右侧栏 | 用量看板（`sidebarTab`） | 在右侧栏的“添加标签页”导引里选择“用量”打开。可选今天、近 7 天、近 30 天、本月；包括每个币种在所选范围内的费用合计、每日费用堆叠柱状图（高峰 / 空闲；鼠标悬停在柱子上显示当天该时段的金额）、缓存命中率趋势、按模型 / 工作区 / 会话排行（已删除的会话单独标注）、低谷时段节省、未定价请求提示，以及“导出 CSV”。有新的用量记入后（防抖）以及重连后自动刷新，刷新期间保留原有内容 | `05-dashboard.png` |
+| 设置 → 用量与费用 | 设置页（始终显示） | 问题列表（无法读取的会话日志、账本错误并提示重建账本、无法使用的价格覆盖、预算文件错误；没有问题时不显示，问题解决后自动消失）、价格目录版本和每个模型的价格版本、价格覆盖编辑（别名 / 自定义价格）、预算（按日 / 按月，可限定工作区；以“每日预算 · ¥10 · 工作区”的形式列出）、界面元素开关、重建账本 | `06-settings-budget.png`、`08-settings-elements.png` |
+| 页面顶部浮层 | 预算提醒（`budgetToast`） | 预算达到 80% 或 100% 时弹出提示，用“每日预算 · ¥10”这样的描述称呼预算（不显示内部 id；找不到对应预算时显示“预算 · ¥10”），约 8 秒后自动消失；多条提醒依次显示 | `07-budget-toast.png` |
 
 其余截图：`09-turn-tail-off.png`（关闭“每轮对话的费用”后新一轮不再显示本轮费用）、`10-after-reload.png`（重新加载页面后费用条数值不变）。
 
-页面断线重连（包括重新加载）后，插件会在收到 `watch` 流的 `hello` 帧时重新拉取全部数据，所以重连前后显示的数值一致。
+页面断线重连（包括重新加载）后，插件会在收到 `watch` 流的 `hello` 帧时重新拉取全部数据（包括已显示的本轮费用、价格目录、预算和看板），所以重连前后显示的数值一致；修改价格覆盖、重建账本后 `dsh-tally` 也会发出 `hello`，界面随之刷新。回填期间新出现的余额路由（`status` 帧）会立即查询余额。
 
 界面文案有中文和英文两套，跟随 dsh 的界面语言。
 
@@ -73,7 +73,7 @@ dsh plugin --profile web add dsh-tally dsh-tally-ui
 
 **样式**：采用“factory 执行时注入 `<style>`”的方式，不使用 `.module.css`。`src/client` 下的 `.css` 文件在打包时被转换成一段代码，factory 执行时向 `document.head` 插入一个 `<style data-plugin="dsh-tally-ui" data-plugin-css="dsh-tally-ui/<文件名>">`（与 dsh 官方插件的标记相同，插件卸载时由 dsh 回收）。类名不做哈希，统一加 `dsh-tally-` 前缀避免冲突。样式只使用 `--dsw-alias-*` 语义变量和 `--dsw-elevation-*`，不写主题选择器和字面颜色值。
 
-**接口描述**：浏览器端调用 Remote API 需要一份带严格编解码器的接口描述（`TypertRemoteContribution`）。dsh 官方用构建期生成器产出这份描述，但生成器依赖 dsh 仓库内部的工作区结构，所以由 `dsh-tally` 手写（`dsh-tally/remote`，见 `packages/tally/src/remote/contract.ts`），本包在启动时用 `ctx.remote.$mount()` 挂载。
+**接口描述**：浏览器端调用 Remote API 需要一份带严格编解码器的接口描述（`TypertRemoteContribution`）。dsh 官方用构建期生成器产出这份描述，但生成器依赖 dsh 仓库内部的工作区结构，所以由 `dsh-tally` 手写（`dsh-tally/remote`，见 `packages/tally/src/remote/contract.ts`），本包在启动时用其中的 `mountTallyRemote(ctx)` 挂载：它调用 `ctx.remote.$mount()`，如果另一个客户端插件已经挂载过 `tally`（宿主对同一个包的第二次挂载会抛出 `Remote package "dsh-tally" is already registered`），就视为成功，继续使用已有的命名空间。
 
 **执行中的判断规则（Task 1）**：两条备用方案都没有用到，最终的端到端验收也是在这个前提下通过的。
 

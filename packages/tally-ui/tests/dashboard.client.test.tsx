@@ -5,6 +5,7 @@ import type { PeakSavings, TallyTokens, UsageGroup, UsageQuery } from 'dsh-tally
 import { Dashboard } from '../src/client/dashboard/Dashboard.tsx'
 import type { DashboardRemote } from '../src/client/dashboard/data.ts'
 import { zh } from '../src/client/locales.ts'
+import { observable } from './support/hooks.ts'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => import('./support/primitives.tsx'))
 
@@ -55,8 +56,10 @@ function mount(script: Script = {}, visible = true, prepare?: (remote: ReturnTyp
   const fake = scriptedRemote(script)
   prepare?.(fake.remote)
   const useTabInfo = () => ({ tab: { visible } }) as never
-  const view = render(<Dashboard remote={fake.remote} now={() => NOW} useTabInfo={useTabInfo} t={t} />)
-  return { ...fake, ...view }
+  const generation = observable(1)
+  const recorded = observable(0)
+  const view = render(<Dashboard remote={fake.remote} generation={generation} recorded={recorded} now={() => NOW} useTabInfo={useTabInfo} t={t} />)
+  return { ...fake, ...view, generation, recorded }
 }
 
 async function settle() {
@@ -184,6 +187,9 @@ describe('Dashboard', () => {
     expect(blob.size).toBe('id,cost\n1,0.5\n'.length)
     expect(blob.type).toContain('text/csv')
     expect(clicked).toEqual(['tally-2026-10-05-2026-10-11.csv|blob:csv'])
+    // Revoked only after the click handler returned, so the download can start.
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:csv')
   })
 
@@ -206,5 +212,40 @@ describe('Dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: zh['tab.retry'] }))
     await settle()
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('shows each bar\'s amount in its title and the range total per currency', async () => {
+    mount({
+      all: [group('2026-10-11')],
+      peak: [group('2026-10-11', { cost: [cny('2.10'), { amount: '0.5', currency: 'USD' }] })],
+      offpeak: [group('2026-10-11', { cost: [cny('1.005')] })],
+      flat: [group('2026-10-11', { cost: [cny('0.0001')] })],
+    })
+    await settle()
+    const chart = document.querySelector('[data-tally="daily-chart"][data-currency="CNY"]')!
+    const titles = [...chart.querySelectorAll('rect title')].map(n => n.textContent)
+    expect(titles).toContain(t('tab.barTitle', { day: '2026-10-11', band: zh['band.peak'], amount: '¥2.1' }))
+    expect(titles).toContain(t('tab.barTitle', { day: '2026-10-11', band: zh['band.offpeak'], amount: '¥1.0051' }))
+    expect(chart.querySelector('[data-tally="range-total"]')?.textContent).toBe(t('tab.rangeTotal', { total: '¥3.1051' }))
+    const usd = document.querySelector('[data-tally="daily-chart"][data-currency="USD"]')!
+    expect(usd.querySelector('[data-tally="range-total"]')?.textContent).toBe(t('tab.rangeTotal', { total: '$0.5' }))
+  })
+
+  it('reloads on a new hello generation and after recorded usage, keeping the data on screen meanwhile', async () => {
+    const view = mount({ peak: [group('2026-10-11', { cost: [cny('1')] })] })
+    await settle()
+    const total = () => document.querySelector('[data-tally="range-total"]')?.textContent
+    expect(total()).toBe(t('tab.rangeTotal', { total: '¥1' }))
+    const calls = view.remote.query.mock.calls.length
+    view.remote.query.mockImplementation(async (q: UsageQuery) => ok(q.groupBy === 'day' && q.filter?.band === 'peak' ? [group('2026-10-11', { cost: [cny('4')] })] : []))
+    act(() => { view.recorded.set(1) })
+    expect(screen.queryByText(zh['tab.loading'])).toBeNull()
+    await settle()
+    expect(view.remote.query.mock.calls.length).toBeGreaterThan(calls)
+    expect(total()).toBe(t('tab.rangeTotal', { total: '¥4' }))
+    view.remote.query.mockImplementation(async (q: UsageQuery) => ok(q.groupBy === 'day' && q.filter?.band === 'peak' ? [group('2026-10-11', { cost: [cny('7')] })] : []))
+    act(() => { view.generation.set(2) })
+    await settle()
+    expect(total()).toBe(t('tab.rangeTotal', { total: '¥7' }))
   })
 })

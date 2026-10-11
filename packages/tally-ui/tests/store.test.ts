@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BalanceSnapshot, BudgetAlert, SessionView, TallyEntry, TallyStatusView, TallyWatchFrame, UsageGroup } from 'dsh-tally-api'
+import type { BalanceSnapshot, Budget, BudgetAlert, SessionView, TallyEntry, TallyStatusView, TallyWatchFrame, UsageGroup } from 'dsh-tally-api'
 import { createTallyStore, type TallyRemoteFace } from '../src/client/store.ts'
 
 /** Captured before fake timers replace it: lets Node report unhandled rejections. */
@@ -63,6 +63,7 @@ describe('createTallyStore', () => {
     session: vi.fn(),
     balance: vi.fn(),
     refreshBalance: vi.fn(),
+    budgets: vi.fn(),
     watch: vi.fn(),
   }
   let face: TallyRemoteFace
@@ -78,6 +79,7 @@ describe('createTallyStore', () => {
     api.query.mockImplementation(async () => ok([group(todayAmount)]))
     api.session.mockImplementation(async () => ok(sessionView('3')))
     api.balance.mockImplementation(async () => ok(balance('50')))
+    api.budgets.mockImplementation(async () => ok([]))
     api.watch.mockImplementation(() => queue.iterable)
     // `@deepseek-ai/dsh-client-test-runtime@0.2.0-rc.2` cannot be imported outside the dsh repo (its entry
     // imports unshipped renderer sources), so `ctx.remote.tally` is scripted as a plain object.
@@ -306,5 +308,110 @@ describe('createTallyStore', () => {
     await vi.advanceTimersByTimeAsync(600)
     expect(api.session).toHaveBeenCalledTimes(1)
     offB()
+  })
+
+  it('counts hello frames in the generation snapshot', async () => {
+    const store = make()
+    store.start(controller.signal)
+    expect(store.generation.getSnapshot()).toBe(0)
+    queue.push({ type: 'hello', status: status() })
+    queue.push({ type: 'status', status: status('v2') })
+    await flush()
+    expect(store.generation.getSnapshot()).toBe(1)
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    expect(store.generation.getSnapshot()).toBe(2)
+  })
+
+  it('bumps the recorded snapshot once per debounced refetch', async () => {
+    const store = make()
+    store.start(controller.signal)
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    expect(store.recorded.getSnapshot()).toBe(0)
+    queue.push({ type: 'recorded', entry: entry('s1') })
+    queue.push({ type: 'recorded', entry: entry('s1') })
+    await flush()
+    expect(store.recorded.getSnapshot()).toBe(0)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(store.recorded.getSnapshot()).toBe(1)
+  })
+
+  it('reloads today at the next local midnight of its time zone, every day, and not after abort', async () => {
+    // 2026-10-11 11:00 in Shanghai; local midnight is 2026-10-11 16:00 UTC.
+    const store = make()
+    store.start(controller.signal)
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    expect(api.query).toHaveBeenCalledTimes(1)
+    todayAmount = '0.5'
+    await vi.advanceTimersByTimeAsync(Date.UTC(2026, 9, 11, 16) - Date.now() - 1)
+    expect(api.query).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await flush()
+    expect(api.query).toHaveBeenCalledTimes(2)
+    const request = api.query.mock.calls[1]![0]
+    expect(request.from).toBe(Date.UTC(2026, 9, 11, 16))
+    expect(request.to).toBe(Date.UTC(2026, 9, 12, 16))
+    expect(store.today.getSnapshot()?.cost[0]?.amount).toBe('0.5')
+    // Re-armed for the following midnight.
+    await vi.advanceTimersByTimeAsync(86_400_000)
+    await flush()
+    expect(api.query).toHaveBeenCalledTimes(3)
+    expect(api.query.mock.calls[2]![0].from).toBe(Date.UTC(2026, 9, 12, 16))
+    controller.abort()
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(2 * 86_400_000)
+    expect(api.query).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps one midnight timer however often today reloads', async () => {
+    const store = make()
+    store.start(controller.signal)
+    queue.push({ type: 'hello', status: status() })
+    queue.push({ type: 'hello', status: status() })
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    expect(vi.getTimerCount()).toBe(1)
+    expect(store.today.getSnapshot()).not.toBeNull()
+  })
+
+  it('loads the budgets on hello and again when an alert names an unknown budget', async () => {
+    const daily: Budget = { id: 'a', period: 'day', scope: {}, limit: { amount: '10', currency: 'CNY' } }
+    const monthly: Budget = { id: 'b', period: 'month', scope: {}, limit: { amount: '100', currency: 'CNY' } }
+    api.budgets.mockImplementation(async () => ok([daily]))
+    const store = make()
+    store.start(controller.signal)
+    expect(store.budgets.getSnapshot()).toBeNull()
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    expect(store.budgets.getSnapshot()).toEqual([daily])
+    expect(api.budgets).toHaveBeenCalledTimes(1)
+    queue.push({ type: 'budget-crossed', alert: alert('a') })
+    await flush()
+    expect(api.budgets).toHaveBeenCalledTimes(1)
+    api.budgets.mockImplementation(async () => ok([daily, monthly]))
+    queue.push({ type: 'budget-crossed', alert: alert('b') })
+    await flush()
+    expect(api.budgets).toHaveBeenCalledTimes(2)
+    expect(store.budgets.getSnapshot()).toEqual([daily, monthly])
+  })
+
+  it('loads the balance of a route that a status frame adds', async () => {
+    const store = make()
+    store.start(controller.signal)
+    queue.push({ type: 'hello', status: status('v1', []) })
+    await flush()
+    expect(api.balance).not.toHaveBeenCalled()
+    queue.push({ type: 'status', status: status('v1', ['r2']) })
+    queue.push({ type: 'status', status: status('v1', ['r2']) })
+    await flush()
+    expect(api.balance).toHaveBeenCalledTimes(1)
+    expect(api.balance).toHaveBeenCalledWith({ route: 'r2' })
+    expect(store.balances.getSnapshot().r2?.wallets[0]?.money.amount).toBe('50')
+    api.balance.mockClear()
+    queue.push({ type: 'hello', status: status('v1', []) })
+    await flush()
+    expect(api.balance).toHaveBeenCalledWith({ route: 'r2' })
   })
 })

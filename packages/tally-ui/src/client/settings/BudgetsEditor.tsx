@@ -3,8 +3,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { Budget, Currency } from 'dsh-tally-api'
 import { compareDecimal } from '../dashboard/decimal.ts'
-import { formatMoneyList } from '../format.ts'
-import { FORMAT_LOCALE, type T } from '../labels.ts'
+import { budgetName, type T } from '../labels.ts'
 
 /** The `tally` Remote methods this editor calls. */
 export interface BudgetsRemote {
@@ -19,7 +18,7 @@ function validAmount(amount: string): boolean {
 }
 
 /** Lists, adds and removes budgets; a refusal shows the server's own message. */
-export function BudgetsEditor({ remote, t }: { remote: BudgetsRemote; t: T }): ReactNode {
+export function BudgetsEditor({ remote, generation = 0, t }: { remote: BudgetsRemote; generation?: number; t: T }): ReactNode {
   const [budgets, setBudgets] = useState<Budget[] | null | undefined>(undefined)
   const [period, setPeriod] = useState<Budget['period']>('day')
   const [workspace, setWorkspace] = useState('')
@@ -36,7 +35,8 @@ export function BudgetsEditor({ remote, t }: { remote: BudgetsRemote; t: T }): R
       setBudgets(null)
     }
   }, [remote])
-  useEffect(() => { void reload() }, [reload])
+  // Reloaded on every `hello`: another window may have changed the budgets.
+  useEffect(() => { void reload() }, [reload, generation])
 
   const run = async (call: () => Promise<RemoteResult<void>>): Promise<boolean> => {
     setBusy(true)
@@ -70,13 +70,7 @@ export function BudgetsEditor({ remote, t }: { remote: BudgetsRemote; t: T }): R
             <ul className="dsh-tally-list">
               {budgets.map(budget => (
                 <li key={budget.id}>
-                  <span>
-                    {t('settings.budget.summary', {
-                      period: t(budget.period === 'day' ? 'settings.budget.day' : 'settings.budget.month'),
-                      workspace: budget.scope.workspaceId ?? t('settings.budget.allWorkspaces'),
-                      limit: formatMoneyList([budget.limit], FORMAT_LOCALE),
-                    })}
-                  </span>
+                  <span>{budgetName(budget, budget.limit, t)}</span>
                   <Button variant="ghost" size="sm" disabled={busy} onClick={() => { void run(() => remote.removeBudget({ id: budget.id })) }}>{t('settings.remove')}</Button>
                 </li>
               ))}

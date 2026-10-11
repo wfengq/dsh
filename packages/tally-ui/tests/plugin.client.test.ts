@@ -31,11 +31,16 @@ function fakeContext(options: { sidebar?: boolean } = {}) {
     usage: { backfill: null, errors: [] }, catalogVersion: 'v1', pricingErrors: [], budgetErrors: [], balanceRoutes: [],
   } }]
   const accepted: number[] = []
+  let wake: (() => void) | undefined
+  /** Delivers one more frame on the open stream. */
+  const push = (frame: TallyWatchFrame) => { frames.push(frame); wake?.() }
   const stream = {
     dispose: vi.fn(async () => {}),
     async *[Symbol.asyncIterator]() {
-      for (const [i, frame] of frames.entries()) yield { generation: 1, value: frame, signal: new AbortController().signal, accept: () => { accepted.push(i) } }
-      await new Promise(() => {})
+      for (let i = 0; ; i++) {
+        while (i >= frames.length) await new Promise<void>((resolve) => { wake = resolve })
+        yield { generation: 1, value: frames[i]!, signal: new AbortController().signal, accept: () => { accepted.push(i) } }
+      }
     },
   }
   const tally = {
@@ -47,6 +52,7 @@ function fakeContext(options: { sidebar?: boolean } = {}) {
     turn: vi.fn(async () => ok({ total: {}, attempts: [] })),
     band: vi.fn(async () => ok(null)),
     catalog: vi.fn(async () => ok({ version: 'v1', providers: [] })),
+    budgets: vi.fn(async () => ok([])),
     watch: vi.fn(),
   }
   const remote = {
@@ -92,7 +98,7 @@ function fakeContext(options: { sidebar?: boolean } = {}) {
       if (deps.every(present)) fn(ctx)
     },
   }
-  return { ctx, registrations, tabTypes, live, setElements, injected, disposers, remote, stream, tally, form, accepted }
+  return { ctx, registrations, tabTypes, live, setElements, injected, disposers, remote, stream, tally, form, accepted, frames, push }
 }
 
 afterEach(() => { vi.restoreAllMocks() })
@@ -188,5 +194,54 @@ describe('dsh-tally-ui browser plugin', () => {
     await apply(ctx as never)
     for (const dispose of disposers) await dispose()
     expect(stream.dispose).toHaveBeenCalled()
+  })
+
+  it('carries on when another client plugin mounted the tally namespace first', async () => {
+    const { ctx, remote, registrations, tally } = fakeContext()
+    remote.$mount.mockImplementation(async () => { throw new Error('typert: Remote package "dsh-tally" is already registered') })
+    await apply(ctx as never)
+    expect(remote.$mount).toHaveBeenCalledTimes(1)
+    expect(registrations.map(r => r.id).filter(Boolean)).toContain('tally.turn')
+    await vi.waitFor(() => { expect(tally.query).toHaveBeenCalled() })
+  })
+
+  it('mounts twice without failing, as two plugins sharing one Client Remote would', async () => {
+    const mounted = new Set<string>()
+    const mount = async (contribution: { package: string }) => {
+      if (mounted.has(contribution.package)) throw new Error(`typert: Remote package "${contribution.package}" is already registered`)
+      mounted.add(contribution.package)
+    }
+    const first = fakeContext()
+    const second = fakeContext()
+    first.remote.$mount.mockImplementation(mount as never)
+    second.remote.$mount.mockImplementation(mount as never)
+    await apply(first.ctx as never)
+    await expect(apply(second.ctx as never)).resolves.toBeUndefined()
+    expect([...mounted]).toEqual(['dsh-tally'])
+  })
+
+  it('still fails on any other mount error', async () => {
+    const { ctx, remote } = fakeContext()
+    remote.$mount.mockImplementation(async () => { throw new Error('typert: invalid descriptor') })
+    await expect(apply(ctx as never)).rejects.toThrow('invalid descriptor')
+  })
+
+  it('caches the catalog per hello generation', async () => {
+    const { ctx, registrations, tally, frames, push } = fakeContext()
+    await apply(ctx as never)
+    await vi.waitFor(() => { expect(tally.query).toHaveBeenCalled() })
+    const face = registrations.find(r => r.id === 'tally.turn')!.inject!() as {
+      catalog: () => Promise<unknown>
+      hooks: { generation: { getSnapshot(): number } }
+    }
+    expect(face.hooks.generation.getSnapshot()).toBe(1)
+    await face.catalog()
+    await face.catalog()
+    expect(tally.catalog).toHaveBeenCalledTimes(1)
+    push(frames[0]!)
+    await vi.waitFor(() => { expect(face.hooks.generation.getSnapshot()).toBe(2) })
+    await face.catalog()
+    await face.catalog()
+    expect(tally.catalog).toHaveBeenCalledTimes(2)
   })
 })

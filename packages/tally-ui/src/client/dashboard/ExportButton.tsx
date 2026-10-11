@@ -5,6 +5,9 @@ import type { DateRange } from './definition.ts'
 import type { DashboardRemote } from './data.ts'
 import './dashboard.css'
 
+/** How long the object URL outlives the click that starts the download. */
+const REVOKE_DELAY_MS = 1000
+
 function stamp(at: number): string {
   const d = new Date(at)
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -29,7 +32,8 @@ export function ExportButton({ remote, range, tz, t }: { remote: DashboardRemote
       document.body.appendChild(link)
       link.click()
       link.remove()
-      URL.revokeObjectURL(url)
+      // Some browsers start the download only after the click handler returns; revoking at once can cancel it.
+      setTimeout(() => { URL.revokeObjectURL(url) }, REVOKE_DELAY_MS)
     } catch {
       setFailed(true)
     } finally {

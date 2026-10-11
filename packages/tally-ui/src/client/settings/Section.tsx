@@ -6,7 +6,9 @@ import type { Snapshot } from '../store.ts'
 import { BudgetsEditor, type BudgetsRemote } from './BudgetsEditor.tsx'
 import { CatalogInfo } from './CatalogInfo.tsx'
 import { ElementSwitches, type ElementsFace } from './ElementSwitches.tsx'
+import { useSnapshot } from './form.ts'
 import { OverridesEditor, type OverridesFace } from './OverridesEditor.tsx'
+import { Problems } from './Problems.tsx'
 import { RebuildButton } from './RebuildButton.tsx'
 import './settings.css'
 
@@ -22,21 +24,26 @@ export interface SectionInjected {
   overridesForm: OverridesFace
   elementsForm: ElementsFace
   status: Snapshot<TallyStatusView | null>
+  /** The store's `hello` count: the catalog and budgets are read again when it changes. */
+  generation: Snapshot<number>
 }
 
 export type SectionProps = SectionInjected & { close: () => void; t: T }
 
 /** Usage and cost page of the settings panel. */
-export function Section({ remote, overridesForm, elementsForm, status, t }: SectionProps): ReactNode {
+export function Section({ remote, overridesForm, elementsForm, status, generation, t }: SectionProps): ReactNode {
+  const hello = useSnapshot(generation)
+  // A new `hello` gives a new loader, which CatalogInfo and BudgetsEditor key their loads on.
   const load = useCallback(async () => {
     const result = await remote.catalog()
     return result.ok ? result.value : null
-  }, [remote])
+  }, [remote, hello])
   return (
     <div className="dsh-tally-settings" data-tally="settings">
+      <Problems status={status} t={t} />
       <CatalogInfo load={load} t={t} />
       <OverridesEditor form={overridesForm} t={t} />
-      <BudgetsEditor remote={remote} t={t} />
+      <BudgetsEditor remote={remote} generation={hello} t={t} />
       <ElementSwitches form={elementsForm} t={t} />
       <RebuildButton rebuild={() => remote.rebuild()} status={status} t={t} />
     </div>

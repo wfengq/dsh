@@ -4,10 +4,10 @@
  * Host, so a reconnect cannot count anything twice.
  */
 import type { TallyRemoteApi } from 'dsh-tally/remote'
-import type { BalanceSnapshot, BudgetAlert, SessionView, TallyStatusView, TallyWatchFrame, UsageGroup } from 'dsh-tally-api'
+import type { BalanceSnapshot, Budget, BudgetAlert, SessionView, TallyStatusView, TallyWatchFrame, UsageGroup } from 'dsh-tally-api'
 
 /** The part of `ctx.remote.tally` the store uses. */
-export type TallyRemoteFace = Pick<TallyRemoteApi, 'status' | 'query' | 'session' | 'balance' | 'refreshBalance' | 'watch'>
+export type TallyRemoteFace = Pick<TallyRemoteApi, 'status' | 'query' | 'session' | 'balance' | 'refreshBalance' | 'budgets' | 'watch'>
 
 /** A subscribable value, usable as a slot `hooks` observable. */
 export interface Snapshot<T> {
@@ -51,6 +51,16 @@ export interface TallyStore {
    * A plugin that reconnects across carrier generations passes its own merged iterable.
    */
   start(signal: AbortSignal, frames?: AsyncIterable<TallyWatchFrame>): void
+  /**
+   * Number of `hello` frames seen so far. Every `hello` may come with new prices, a rebuilt ledger or a
+   * gap in the stream, so anything fetched on its own (a turn, the catalog, the dashboard) keys its
+   * fetch on this value and asks again when it changes.
+   */
+  readonly generation: Snapshot<number>
+  /** Changes after each debounced refetch that followed `recorded` frames: new usage was written. */
+  readonly recorded: Snapshot<number>
+  /** The configured budgets, loaded on every `hello` and budget alert; `null` until loaded. */
+  readonly budgets: Snapshot<readonly Budget[] | null>
   /** Latest status; `null` before the first `hello`. */
   readonly status: Snapshot<TallyStatusView | null>
   /** Latest balance by route; a route that never succeeded carries its error snapshot or is absent. */
@@ -97,6 +107,9 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
   const balances = createSnapshot<Readonly<Record<string, BalanceSnapshot>>>({})
   const today = createSnapshot<UsageGroup | null>(null)
   const alerts = createSnapshot<readonly BudgetAlert[]>([])
+  const generation = createSnapshot(0)
+  const recorded = createSnapshot(0)
+  const budgets = createSnapshot<readonly Budget[] | null>(null)
   const sessions = new Map<string, Writable<SessionView | null>>()
   const sessionSeq = new Map<string, number>()
   /** Sessions whose last subscriber left: kept for identity, never refetched until one returns. */
@@ -104,11 +117,27 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
   const refs = new Map<string, number>()
   const knownRoutes = new Set<string>()
   let todaySeq = 0
+  let budgetsSeq = 0
   let started = false
+  let stopped = false
+  let midnight: ReturnType<typeof setTimeout> | undefined
+
+  /** Reloads "today" when the local day ends; every load re-arms it for the day it loaded. */
+  function armMidnight(at: number): void {
+    clearTimeout(midnight)
+    midnight = undefined
+    if (stopped) return
+    const delay = Math.max(1, localMidnight(at, opts.timeZone, 1) - at)
+    midnight = setTimeout(() => {
+      midnight = undefined
+      fire(loadToday())
+    }, delay)
+  }
 
   async function loadToday(): Promise<void> {
     const seq = ++todaySeq
     const at = now()
+    armMidnight(at)
     const result = await remote.query({
       from: localMidnight(at, opts.timeZone, 0), to: localMidnight(at, opts.timeZone, 1), groupBy: 'day', tz: opts.timeZone,
     })
@@ -128,6 +157,20 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     if (snapshot === null) return
     knownRoutes.add(route)
     balances.set({ ...balances.getSnapshot(), [route]: snapshot })
+  }
+
+  async function loadBudgets(): Promise<void> {
+    const seq = ++budgetsSeq
+    const result = await remote.budgets()
+    if (seq !== budgetsSeq || !result.ok) return
+    budgets.set(result.value)
+  }
+
+  /** Adds the routes of a status to the known ones; returns those that were new. */
+  function addRoutes(view: TallyStatusView): string[] {
+    const added = view.balanceRoutes.filter(route => !knownRoutes.has(route))
+    for (const route of added) knownRoutes.add(route)
+    return added
   }
 
   async function loadBalance(route: string): Promise<void> {
@@ -150,6 +193,7 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     fire(loadToday())
     for (const id of openSessions()) fire(loadSession(id))
     for (const route of [...knownRoutes]) fire(loadBalance(route))
+    fire(loadBudgets())
   }
 
   // Debounced refetch after `recorded` frames.
@@ -168,7 +212,10 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     const ids = [...dueSessions]
     const refetchToday = dueToday
     cancelRecorded()
-    if (refetchToday) fire(loadToday())
+    if (refetchToday) {
+      fire(loadToday())
+      recorded.set(recorded.getSnapshot() + 1)
+    }
     for (const id of ids) if (sessions.has(id) && !closed.has(id)) fire(loadSession(id))
   }
   function scheduleRecorded(sessionIds: readonly string[]): void {
@@ -183,11 +230,14 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     switch (frame.type) {
       case 'hello':
         status.set(frame.status)
-        for (const route of frame.status.balanceRoutes) knownRoutes.add(route)
+        addRoutes(frame.status)
         reloadAll()
+        generation.set(generation.getSnapshot() + 1)
         break
       case 'status':
         status.set(frame.status)
+        // A balance provider registered after the `hello` shows up here first.
+        for (const route of addRoutes(frame.status)) fire(loadBalance(route))
         break
       case 'recorded':
         scheduleRecorded([frame.entry.sessionId, frame.entry.rootSessionId])
@@ -198,6 +248,8 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
       case 'budget-crossed': {
         const key = alertKey(frame.alert)
         if (!alerts.getSnapshot().some(a => alertKey(a) === key)) alerts.set([...alerts.getSnapshot(), frame.alert])
+        // The alert names its budget by id; a budget added since the last load is fetched now.
+        if (!budgets.getSnapshot()?.some(b => b.id === frame.alert.budgetId)) fire(loadBudgets())
         break
       }
     }
@@ -212,19 +264,29 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     } catch (error) {
       if (!signal.aborted) opts.onError?.(error)
     } finally {
-      if (signal.aborted) cancelRecorded()
+      if (signal.aborted) stop()
     }
+  }
+
+  function stop(): void {
+    stopped = true
+    cancelRecorded()
+    clearTimeout(midnight)
+    midnight = undefined
   }
 
   return {
     start(signal, frames) {
       if (started) throw new Error('the tally store was already started')
       started = true
-      if (signal.aborted) return
+      if (signal.aborted) { stopped = true; return }
       const source = frames ?? remote.watch(signal)
-      signal.addEventListener('abort', () => { cancelRecorded() }, { once: true })
+      signal.addEventListener('abort', stop, { once: true })
       void consume(signal, source)
     },
+    generation,
+    recorded,
+    budgets,
     status,
     balances,
     today,

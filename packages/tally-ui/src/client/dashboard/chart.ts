@@ -15,6 +15,8 @@ export interface Bar {
   h: number
   band: 'peak' | 'offpeak'
   key: string
+  /** The decimal amount the segment stands for, for its label; never used for geometry. */
+  amount: string
 }
 
 /** A decimal string as a ratio operand; anything unparsable counts as zero. */
@@ -40,8 +42,8 @@ export function stackedBars(days: readonly DayAmounts[], width: number, height: 
     const scale = max > 0 ? height / max : 0
     const offpeakH = magnitude(day.offpeak) * scale
     const peakH = magnitude(day.peak) * scale
-    bars.push({ x, y: height - offpeakH, w, h: offpeakH, band: 'offpeak', key: day.key })
-    bars.push({ x, y: height - offpeakH - peakH, w, h: peakH, band: 'peak', key: day.key })
+    bars.push({ x, y: height - offpeakH, w, h: offpeakH, band: 'offpeak', key: day.key, amount: day.offpeak })
+    bars.push({ x, y: height - offpeakH - peakH, w, h: peakH, band: 'peak', key: day.key, amount: day.peak })
   })
   return bars
 }

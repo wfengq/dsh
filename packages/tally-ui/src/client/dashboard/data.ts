@@ -16,6 +16,8 @@ const TOP = 10
 export interface CurrencyChart {
   currency: Money['currency']
   days: DayAmounts[]
+  /** Decimal sum of every day's peak and off-peak amount: the priced spend of the range. */
+  total: string
 }
 
 export interface DashboardData {
@@ -72,14 +74,15 @@ export async function loadDashboard(remote: DashboardRemote, range: DateRange, t
   const offpeakBy = costByDay(offpeak)
   const flatBy = costByDay(flat)
   const currencies = CURRENCIES.filter(c => [peak, offpeak, flat].some(groups => groups.some(g => g.cost.some(m => m.currency === c))))
-  const charts = currencies.map((currency): CurrencyChart => ({
-    currency,
-    days: keys.map(key => ({
+  const charts = currencies.map((currency): CurrencyChart => {
+    const days = keys.map(key => ({
       key,
       peak: amountOf(peakBy.get(key) ?? [], currency),
       offpeak: addDecimal(amountOf(offpeakBy.get(key) ?? [], currency), amountOf(flatBy.get(key) ?? [], currency)),
-    })),
-  }))
+    }))
+    const total = days.reduce((sum, day) => addDecimal(addDecimal(sum, day.peak), day.offpeak), '0')
+    return { currency, days, total }
+  })
   const tokensBy = new Map<string, TallyTokens>(all.map(g => [g.key, g.tokens]))
   const hitRates = keys.map(key => {
     const tokens = tokensBy.get(key)

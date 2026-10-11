@@ -298,11 +298,12 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     const budgets = dialog.locator('[data-tally="budgets"]')
     await budgets.getByRole('textbox', { name: 'Amount' }).fill('0.000001')
     await budgets.getByRole('button', { name: 'Add budget' }).click()
-    await budgets.getByText(/^Daily · All workspaces · /).waitFor({ timeout: 10_000 })
+    // Budgets are named by period and limit, never by their UUID.
+    await budgets.getByText(/^Daily budget · /).waitFor({ timeout: 10_000 })
     await shot('06-settings-budget')
     await closeSettings()
 
-    const toast = page.getByRole('alert').filter({ hasText: /Budget ".+" is (80% used|used up)/ })
+    const toast = page.getByRole('alert').filter({ hasText: /"Daily budget · [^"]+" is (80% used|used up)/ })
     const shown = toast.first().waitFor({ timeout: TURN_TIMEOUT })
     await sendAndFinish('say hi again')
     await shown
@@ -319,6 +320,8 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     expect(await dialog.locator('[data-tally="elements"] [role="alert"]').count()).toBe(0)
     await shot('08-settings-elements')
     await closeSettings()
+    // Positive signal that the switch reached the conversation: the existing turn costs go away.
+    await expect.poll(() => tally('turn').count(), { timeout: 10_000 }).toBe(0)
 
     await sendAndFinish('one more turn')
     // A turn cost renders once the turn's entries are recorded and announced, well within a second
