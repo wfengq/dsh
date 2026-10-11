@@ -106,6 +106,19 @@ export interface TallyStatus {
   errors: { sessionId?: string; message: string }[]
 }
 
+/** Health of the whole plugin as the browser reads it through the `tally` Remote namespace. */
+export interface TallyStatusView {
+  usage: TallyStatus
+  /** Version of the bundled price catalog. */
+  catalogVersion: string
+  /** Price overrides that were ignored because they could not be used. */
+  pricingErrors: string[]
+  /** Problems found while loading the budget file. */
+  budgetErrors: string[]
+  /** Routes with a registered balance provider. */
+  balanceRoutes: string[]
+}
+
 export interface UsageService {
   query(q: UsageQuery): Promise<UsageGroup[]>
   /** Usage of one session, including a breakdown per sub-agent. */

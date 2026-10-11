@@ -81,6 +81,11 @@ export class TallyBalance extends Service implements BalanceService {
     }
   }
 
+  /** Routes with a registered fetcher, in registration order. */
+  routes(): string[] {
+    return [...this.state.routes.keys()]
+  }
+
   async get(route: string): Promise<BalanceSnapshot | null> {
     const entry = this.state.routes.get(route)
     if (entry === undefined) return null

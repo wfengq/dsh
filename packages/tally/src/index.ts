@@ -5,12 +5,14 @@ import type { ProviderPriceOverride } from 'dsh-tally-api'
 import { TallyBalance } from './balance-service.js'
 import { TallyBudget } from './budget-service.js'
 import { TallyPricingService } from './pricing-service.js'
+import { TallyRemote } from './remote/service.js'
 import { TallyUsage } from './usage-service.js'
 
 export { TallyBalance, type TallyBalanceConfig } from './balance-service.js'
 export { TallyBudget, type TallyBudgetConfig } from './budget-service.js'
 export { Recorder, type SessionHeaderLike } from './recorder.js'
 export { TallyPricing, TallyPricingService, type TallyPricingOptions } from './pricing-service.js'
+export { TallyRemote } from './remote/service.js'
 export { TallyUsage, type TallyUsageConfig } from './usage-service.js'
 export { TallyStore, type StoredEntry } from './store.js'
 
@@ -89,4 +91,5 @@ export function apply(ctx: Context, config: Config) {
     dbPath: config.dbPath ?? dshHomePath('tally', 'tally.v1.sqlite'),
     backfillBatch: config.backfillBatch,
   })
+  ctx.plugin(TallyRemote)
 }

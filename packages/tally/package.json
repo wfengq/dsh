@@ -10,6 +10,10 @@
     ".": {
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
+    },
+    "./remote": {
+      "types": "./lib/remote/contract.d.ts",
+      "default": "./lib/remote/contract.js"
     }
   },
   "files": [
@@ -28,7 +32,8 @@
   },
   "dependencies": {
     "dsh-pricing-data": "workspace:^",
-    "dsh-tally-api": "workspace:^"
+    "dsh-tally-api": "workspace:^",
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.4-0 <4.1.0-0",
@@ -36,16 +41,20 @@
     "@deepseek-ai/dsh-llm": ">=0.2.0-0 <0.3.0-0",
     "@deepseek-ai/dsh-session": ">=0.2.0-0 <0.3.0-0",
     "@deepseek-ai/dsh-session-query": ">=0.2.0-0 <0.3.0-0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.0-0 <0.3.0-0",
     "@deepseek-ai/schemastery": ">=3.18.4-0 <3.19.0-0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-api-gateway": "0.2.0-rc.2",
     "@deepseek-ai/dsh-home-paths": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm-retry": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session-query": "0.2.0-rc.2",
     "@deepseek-ai/dsh-token-meter": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-registry": "0.2.0-rc.2",
     "@deepseek-ai/schemastery": "3.18.4"
   }
 }

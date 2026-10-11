@@ -17,7 +17,7 @@ function audit(name: string): AuditReport {
 }
 
 describe('dsh-trust-check capability gate', () => {
-  for (const name of ['pricing-data', 'tally-api', 'tally']) {
+  for (const name of ['pricing-data', 'tally-api', 'tally', 'tally-ui']) {
     it(`${name} has no red lines`, () => {
       const report = audit(name)
       expect(report.redLines, JSON.stringify(report.redLines)).toEqual([])
