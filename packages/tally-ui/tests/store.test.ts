@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BalanceSnapshot, BudgetAlert, SessionView, TallyEntry, TallyStatusView, TallyWatchFrame, UsageGroup } from 'dsh-tally-api'
 import { createTallyStore, type TallyRemoteFace } from '../src/client/store.ts'
 
+/** Captured before fake timers replace it: lets Node report unhandled rejections. */
+const realSetImmediate = setImmediate
+
 const ok = <T>(value: T) => ({ ok: true as const, value })
 const fail = (message: string) => ({ ok: false as const, error: new Error(message) })
 
@@ -240,5 +243,68 @@ describe('createTallyStore', () => {
     queue.push({ type: 'hello', status: status() })
     await flush()
     expect(api.query).not.toHaveBeenCalled()
+  })
+  it('swallows transport rejections of background loads instead of leaving them unhandled', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason) }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const store = make()
+      store.session('s1')
+      store.start(controller.signal)
+      api.query.mockImplementation(async () => { throw new Error('carrier lost') })
+      api.session.mockImplementation(async () => { throw new Error('carrier lost') })
+      api.balance.mockImplementation(async () => { throw new Error('carrier lost') })
+      queue.push({ type: 'hello', status: status('v1', ['r1']) })
+      await flush()
+      queue.push({ type: 'recorded', entry: entry('s1') })
+      await vi.advanceTimersByTimeAsync(600)
+      await flush()
+      // Node reports unhandled rejections after the microtask queue drains.
+      await new Promise(resolve => realSetImmediate(resolve))
+      expect(unhandled).toEqual([])
+      expect(store.today.getSnapshot()).toBeNull()
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
+  it('stops refetching a session once its last subscriber leaves and reloads it when one returns', async () => {
+    const store = make()
+    const session = store.session('s1')
+    store.start(controller.signal)
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    const off = session.subscribe(() => {})
+    off()
+    api.session.mockClear()
+    queue.push({ type: 'recorded', entry: entry('s1') })
+    await vi.advanceTimersByTimeAsync(600)
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    expect(api.session).not.toHaveBeenCalled()
+
+    const again = store.session('s1')
+    expect(again).toBe(session)
+    const off2 = again.subscribe(() => {})
+    await flush()
+    expect(api.session).toHaveBeenCalledTimes(1)
+    off2()
+  })
+
+  it('keeps refetching a session while any of several subscribers remains', async () => {
+    const store = make()
+    const session = store.session('s1')
+    store.start(controller.signal)
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    const offA = session.subscribe(() => {})
+    const offB = session.subscribe(() => {})
+    offA()
+    api.session.mockClear()
+    queue.push({ type: 'recorded', entry: entry('s1') })
+    await vi.advanceTimersByTimeAsync(600)
+    expect(api.session).toHaveBeenCalledTimes(1)
+    offB()
   })
 })

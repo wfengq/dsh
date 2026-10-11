@@ -13,7 +13,7 @@ import { startMockLlmServer, type MockLlmServer } from '@deepseek-ai/dsh-llm-moc
  * installed with `dsh plugin --profile web add <dir>` (the browser half only attaches to a
  * Loader row named by the bare package name), `dsh --profile web` serves the UI, and a real
  * Chromium checks that the browser bundle mounts the `tally` Remote namespace and renders the
- * status dot in the session header.
+ * session total in the session header and the cost dock below the composer.
  */
 
 const tallyDir = fileURLToPath(new URL('../../../tally/', import.meta.url))
@@ -153,7 +153,7 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     await dialog.getByRole('button', { name: 'Open', exact: true }).click()
   }
 
-  it('mounts the tally namespace and shows the status dot in a new session', async () => {
+  it('mounts the tally namespace and shows the session total and the cost dock in a new session', async () => {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, locale: 'en-US' })
     const consoleErrors: string[] = []
     page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()) })
@@ -168,7 +168,8 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     await page.keyboard.type('say hi')
     await page.keyboard.press('Enter')
 
-    await page.locator('[data-tally="status"][data-ready="true"]').waitFor({ timeout: 30_000 })
+    await page.locator('[data-tally="total"]').waitFor({ timeout: 30_000 })
+    await page.locator('[data-tally="dock"] [data-tally="today"]').waitFor({ timeout: 30_000 })
 
     expect(consoleErrors).toEqual([])
     expect(web.output.stderr, describeRun(web.output)).not.toContain('ExperimentalWarning')

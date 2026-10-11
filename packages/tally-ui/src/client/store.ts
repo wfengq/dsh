@@ -99,6 +99,9 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
   const alerts = createSnapshot<readonly BudgetAlert[]>([])
   const sessions = new Map<string, Writable<SessionView | null>>()
   const sessionSeq = new Map<string, number>()
+  /** Sessions whose last subscriber left: kept for identity, never refetched until one returns. */
+  const closed = new Set<string>()
+  const refs = new Map<string, number>()
   const knownRoutes = new Set<string>()
   let todaySeq = 0
   let started = false
@@ -132,11 +135,21 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     if (result.ok) putBalance(route, result.value)
   }
 
+  /**
+   * Runs a background load. A transport rejection keeps the previous value, like a refused call,
+   * instead of surfacing as an unhandled rejection.
+   */
+  function fire(load: Promise<void>): void {
+    load.catch(() => {})
+  }
+
+  const openSessions = () => [...sessions.keys()].filter(id => !closed.has(id))
+
   function reloadAll(): void {
     cancelRecorded()
-    void loadToday()
-    for (const id of sessions.keys()) void loadSession(id)
-    for (const route of [...knownRoutes]) void loadBalance(route)
+    fire(loadToday())
+    for (const id of openSessions()) fire(loadSession(id))
+    for (const route of [...knownRoutes]) fire(loadBalance(route))
   }
 
   // Debounced refetch after `recorded` frames.
@@ -155,12 +168,12 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     const ids = [...dueSessions]
     const refetchToday = dueToday
     cancelRecorded()
-    if (refetchToday) void loadToday()
-    for (const id of ids) void loadSession(id)
+    if (refetchToday) fire(loadToday())
+    for (const id of ids) if (sessions.has(id) && !closed.has(id)) fire(loadSession(id))
   }
   function scheduleRecorded(sessionIds: readonly string[]): void {
     dueToday = true
-    for (const id of sessionIds) if (sessions.has(id)) dueSessions.add(id)
+    for (const id of sessionIds) if (sessions.has(id) && !closed.has(id)) dueSessions.add(id)
     clearTimeout(quiet)
     quiet = setTimeout(flushRecorded, RECORDED_DEBOUNCE_MS)
     ceiling ??= setTimeout(flushRecorded, RECORDED_MAX_WAIT_MS)
@@ -219,10 +232,33 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     session(sessionId) {
       let snapshot = sessions.get(sessionId)
       if (!snapshot) {
-        snapshot = createSnapshot<SessionView | null>(null)
+        const inner = createSnapshot<SessionView | null>(null)
+        // Subscriptions are reference counted: once the last one leaves, the session is closed and
+        // no longer refetched; the next subscriber reopens and reloads it.
+        snapshot = {
+          ...inner,
+          subscribe(listener) {
+            const count = refs.get(sessionId) ?? 0
+            refs.set(sessionId, count + 1)
+            if (count === 0 && closed.delete(sessionId) && started) fire(loadSession(sessionId))
+            const off = inner.subscribe(listener)
+            let live = true
+            return () => {
+              if (!live) return
+              live = false
+              off()
+              const left = (refs.get(sessionId) ?? 1) - 1
+              refs.set(sessionId, left)
+              if (left === 0) {
+                closed.add(sessionId)
+                dueSessions.delete(sessionId)
+              }
+            }
+          },
+        }
         sessions.set(sessionId, snapshot)
         // Before `start` the first `hello` loads it; afterwards it must load itself.
-        if (started) void loadSession(sessionId)
+        if (started) fire(loadSession(sessionId))
       }
       return snapshot
     },

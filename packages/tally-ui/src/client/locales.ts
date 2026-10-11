@@ -16,6 +16,8 @@ export const zh = {
   'balance.notConfigured': '未配置账号',
   'balance.signedOut': '未登录',
   'balance.failed': '查询失败：{reason}',
+  'balance.refresh': '点击刷新余额',
+  'balance.refreshing': '正在刷新余额',
 
   'dock.session': '本会话',
   'dock.today': '今日',
@@ -26,7 +28,7 @@ export const zh = {
   'turn.cacheRead': '缓存命中',
   'turn.output': '输出',
   'turn.hitRate': '命中率',
-  'turn.requests': '请求数',
+  'turn.requests': '请求次数（含重试）',
   'turn.priceVersion': '价格版本',
   'turn.source': '价格来源',
 
@@ -77,6 +79,8 @@ export const en: Record<keyof typeof zh, string> = {
   'balance.notConfigured': 'Account not configured',
   'balance.signedOut': 'Signed out',
   'balance.failed': 'Lookup failed: {reason}',
+  'balance.refresh': 'Click to refresh the balance',
+  'balance.refreshing': 'Refreshing the balance',
 
   'dock.session': 'Session',
   'dock.today': 'Today',
@@ -87,7 +91,7 @@ export const en: Record<keyof typeof zh, string> = {
   'turn.cacheRead': 'Cache hit',
   'turn.output': 'Output',
   'turn.hitRate': 'Hit rate',
-  'turn.requests': 'Requests',
+  'turn.requests': 'Requests (incl. retries)',
   'turn.priceVersion': 'Price version',
   'turn.source': 'Price source',
 

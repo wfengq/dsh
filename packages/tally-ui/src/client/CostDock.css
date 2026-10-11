@@ -1,0 +1,25 @@
+.dsh-tally-dock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-tally-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.dsh-tally-label {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-num {
+  font-variant-numeric: tabular-nums;
+}
