@@ -1,0 +1,67 @@
+import type { AccountClientMetadata, AccountDetails } from '@deepseek-ai/dsh-deepseek-account'
+import type { BalanceFetcher } from 'dsh-tally-api'
+import { parseAccountBalance, parseApiBalance } from './parse.js'
+
+export interface ApiKeyFetcherOptions {
+  baseURL: string
+  /** Resolved on every call so a changed credential applies without a restart. */
+  resolveKey: () => Promise<string | undefined>
+  fetch?: typeof fetch
+}
+
+/**
+ * Fetcher for `GET {baseURL}/user/balance` with an API key.
+ *
+ * Every error thrown from here carries a fixed message: the key is only ever placed in the
+ * request header and never reaches an error, log or snapshot. Errors raised by `fetch` or
+ * `res.json()` are replaced rather than forwarded, because their text is not under our control.
+ */
+export function apiKeyFetcher(opts: ApiKeyFetcherOptions): BalanceFetcher {
+  const doFetch = opts.fetch ?? fetch
+  return async (signal) => {
+    const key = await opts.resolveKey()
+    if (!key) throw new Error('DEEPSEEK_API_KEY not configured')
+
+    let res: Response
+    try {
+      res = await doFetch(new URL('/user/balance', opts.baseURL), {
+        headers: { Authorization: 'Bearer ' + key, Accept: 'application/json' },
+        signal,
+      })
+    } catch (error) {
+      // An abort (timeout or shutdown) keeps its own reason so callers can tell it apart.
+      if (signal.aborted) throw error
+      throw new Error('DeepSeek balance: request failed')
+    }
+    if (!res.ok) throw new Error('DeepSeek balance: HTTP ' + res.status)
+
+    let json: unknown
+    try {
+      json = await res.json()
+    } catch (error) {
+      if (signal.aborted) throw error
+      throw new Error('DeepSeek balance: invalid JSON response')
+    }
+    return parseApiBalance(json)
+  }
+}
+
+export interface AccountFetcherOptions {
+  getBalance: (client: AccountClientMetadata) => Promise<AccountDetails['balance'] | null>
+  /** The dsh version reported to the account platform. */
+  version: string
+}
+
+/** Fetcher backed by the official `deepseekAccount` service; it makes no request of its own. */
+export function accountFetcher(opts: AccountFetcherOptions): BalanceFetcher {
+  return async () => {
+    const r = await opts.getBalance({
+      version: opts.version,
+      locale: 'zh-CN',
+      timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
+    })
+    if (r === null) throw new Error('DeepSeek account: signed out')
+    if (r.status === 'failed') throw new Error('DeepSeek account: balance query failed')
+    return parseAccountBalance(r)
+  }
+}
