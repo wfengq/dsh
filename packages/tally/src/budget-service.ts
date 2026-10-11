@@ -107,18 +107,23 @@ export class TallyBudget extends Service implements BudgetService {
     if (batch.length === 0) return
     for (const budget of this.state.file.budgets()) {
       // The latest entry of each period stands for all earlier ones of that period (the query
-      // covers them anyway); periods keep the order in which their last entry arrived.
+      // covers them anyway). Older periods go first so a newer period's alert record cannot
+      // make an older period's crossing look stale.
       const latest = new Map<number, number>()
       for (const entry of batch) {
         if (budget.scope.workspaceId !== undefined && budget.scope.workspaceId !== entry.workspaceId) continue
         if (budget.limit.currency !== entry.cost!.currency) continue
         const { start } = periodBounds(budget.period, entry.at, this.timeZone)
-        latest.delete(start)
-        latest.set(start, entry.at)
+        latest.set(start, Math.max(latest.get(start) ?? entry.at, entry.at))
       }
-      for (const at of latest.values()) {
+      for (const [, at] of [...latest].sort(([a], [b]) => a - b)) {
         if (this.state.disposed) return
-        await this.evaluateBudget(budget, at)
+        // One failing evaluation must not cost the rest of the batch.
+        try {
+          await this.evaluateBudget(budget, at)
+        } catch (error) {
+          this.ctx.logger.warn(`tally: budget evaluation failed: ${messageOf(error)}`)
+        }
       }
     }
   }

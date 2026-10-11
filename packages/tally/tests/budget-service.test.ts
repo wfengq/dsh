@@ -298,7 +298,40 @@ describe('TallyBudget', () => {
     expect(alerts.map(a => a.threshold)).toEqual([0.8, 1])
   })
 
-  it('evaluates each period of a burst once, in the order their last entries arrived', async () => {
+  it('evaluates the older period of a burst first, whatever order its entries arrived in', async () => {
+    const budget = await load()
+    budget.set(daily)
+    usage.spent = { CNY: '8' }
+    ctx.emit('tally/recorded', entry({ at: T0 }))
+    ctx.emit('tally/recorded', entry({ at: T0 + DAY }))
+    ctx.emit('tally/recorded', entry({ at: T0 + 1 }))
+    await idle()
+    await idle()
+    // Evaluating the newer period first would record its alert and make the older one look stale.
+    expect(alerts.map(a => [a.periodStart, a.threshold])).toEqual([
+      [Date.UTC(2026, 9, 20), 0.8],
+      [Date.UTC(2026, 9, 21), 0.8],
+    ])
+  })
+
+  it('keeps evaluating the rest of a burst when one evaluation fails', async () => {
+    const budget = await load()
+    budget.set(daily)
+    usage.spent = { CNY: '8' }
+    const query = usage.query.bind(usage)
+    vi.spyOn(usage, 'query')
+      .mockImplementationOnce(async () => { throw new Error('boom') })
+      .mockImplementation(query)
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    ctx.emit('tally/recorded', entry({ at: T0 }))
+    ctx.emit('tally/recorded', entry({ at: T0 + DAY }))
+    await idle()
+    await idle()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('boom'))
+    expect(alerts.map(a => [a.periodStart, a.threshold])).toEqual([[Date.UTC(2026, 9, 21), 0.8]])
+  })
+
+  it('evaluates each period of a burst once, oldest period first', async () => {
     const budget = await load()
     budget.set(daily)
     usage.spent = { CNY: '8' }
@@ -308,7 +341,6 @@ describe('TallyBudget', () => {
     ctx.emit('tally/recorded', entry({ at: T0 + DAY + 1 }))
     await idle()
     await idle()
-    // The second period's entry arrived last, so the first period is evaluated before it.
     expect(usage.queries.map(q => q.from)).toEqual([Date.UTC(2026, 9, 20), Date.UTC(2026, 9, 21)])
     expect(alerts.map(a => [a.periodStart, a.threshold])).toEqual([
       [Date.UTC(2026, 9, 20), 0.8],
