@@ -293,7 +293,7 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 
 - 用 changesets 管理版本，发布到 npm；提交到 awesome-dsh-plugin 和 dsh-market。
 - README 中贴出 dsh-trust-check 对五个包的扫描结果，并说明为什么 balance-deepseek 这个包有红线、它的代码范围有多大。
-- 给小鲸鱼余额挂件（MeteorNOX/DeepSeek-Balance-Whale-Widget）、dsh-cost-meter、dsh-token-usage-stats 提接入 PR。PR 保证兼容：没有安装 `dsh-tally` 时，挂件照旧使用原来的逻辑。
+- ~~给现有插件提接入 PR~~：2026-10-11 决定不做。生态采用靠自带界面和公开文档（README 中的接入示例），不主动给其他作者的插件提 PR。
 - `dsh-pricing-data` 同时作为独立的数据包推广给其他 agent 生态的用量工具。
 
 ## 10. 里程碑
@@ -304,7 +304,7 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 | M2 | `dsh-tally-api` 和账本核心（记账、存储、回填、查询、Remote API） | 口径、幂等、重建一致性三类测试通过；在真实 dsh 中完成冒烟测试 |
 | M3 | 余额提供方和预算 | 在真实账号上能查到余额，预算提醒能触发 |
 | M4 | `dsh-tally-ui` | 5 个挂载位置在真实 dsh web 中验证通过 |
-| M5 | 对账工具、文档、发布、接入 PR | 已发布到 npm，已收录进 awesome 列表，至少提交 3 个接入 PR |
+| M5 | 对账工具、文档、发布 | 已发布到 npm，已收录进 awesome 列表 |
 
 ## 11. 外部依赖与未决事项
 
@@ -321,7 +321,7 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 
 | 风险 | 应对 |
 |---|---|
-| 挂件作者不接入 | 自带界面要单独具备竞争力；接入 PR 保证兼容；`dsh-pricing-data` 的接入门槛最低，只需改一行 import |
+| 挂件作者不接入 | 自带界面要单独具备竞争力；README 提供接入示例；`dsh-pricing-data` 的接入门槛最低，只需改一行 import |
 | 官方推出 DeepSeek 自家的费用展示 | 把官方数据接进来作为其中一个数据源；多厂商价格、跨会话账本和预算仍然是我们独有的 |
 | 价格数据出错，损害信任 | 每条价格附带来源和生效日期；界面注明“估算值，以账单为准”；提供公开的对账工具 |
 | dsh 的破坏性升级 | 兼容矩阵 CI 在每次 dsh 发版时自动运行；只依赖已文档化的公开接口（Service Definition、事件、slot） |
