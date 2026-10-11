@@ -1,11 +1,13 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { TallyStore } from '../src/store.js'
 
+const require = createRequire(import.meta.url)
 const cli = fileURLToPath(new URL('../lib/cli.js', import.meta.url))
 const sh = (iso: string) => Date.parse(iso + '+08:00')
 let dir: string
@@ -96,5 +98,47 @@ describe('dsh-tally reconcile', () => {
     writeFileSync(overrides, JSON.stringify([{ provider: 'deepseek-official', kind: 'manual', currency: 'CNY', models: { 'deepseek-flash': { input: '3', output: '1' } } }]))
     const r = run('reconcile', '--bill', writeBill('2026-10-14,deepseek-flash,3,CNY\n'), '--format', 'csv', '--db', db, '--overrides', overrides)
     expect(r.status).toBe(0)
+  })
+
+  it('prints 100% for lines present on one side only', () => {
+    const r = run('reconcile', '--bill', writeBill('2026-10-14,deepseek-flash,2,CNY\n2026-10-14,other,1,CNY\n'), '--format', 'csv', '--db', db)
+    expect(r.stdout).toMatch(/other.*差异 100\.00%/)
+  })
+
+  it('rejects --from after --to and impossible dates', () => {
+    const bill = writeBill('2026-10-14,deepseek-flash,2,CNY\n')
+    expect(run('reconcile', '--bill', bill, '--format', 'csv', '--db', db, '--from', '2026-10-15', '--to', '2026-10-14').status).toBe(2)
+    const bad = run('reconcile', '--bill', bill, '--format', 'csv', '--db', db, '--from', '2026-13-45')
+    expect(bad.status).toBe(2)
+    expect(bad.stderr).toContain('2026-13-45')
+  })
+
+  it('says how many bill lines fall outside the chosen range', () => {
+    const r = run('reconcile', '--bill', writeBill('2026-10-14,deepseek-flash,2,CNY\n2026-10-20,deepseek-flash,1,CNY\n'),
+      '--format', 'csv', '--db', db, '--to', '2026-10-14')
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('1 行不在对账日期范围内')
+  })
+
+  it('prints usage to stderr for an unknown command', () => {
+    const r = run('nope')
+    expect(r.status).toBe(2)
+    expect(r.stdout).toBe('')
+    expect(r.stderr).toContain('用法')
+  })
+
+  it.skipIf(process.getuid?.() !== 0)('reads a ledger in a directory it cannot write to', () => {
+    const ro = mkdtempSync(join(tmpdir(), 'dsh-tally-ro-'))
+    const copy = join(ro, 'tally.v1.sqlite')
+    writeFileSync(copy, require('node:fs').readFileSync(db))
+    chmodSync(ro, 0o555)
+    chmodSync(copy, 0o444)
+    const bill = join(ro, '..', 'bill-ro.csv')
+    writeFileSync(bill, '日期,模型,金额,币种\n2026-10-14,deepseek-flash,2,CNY\n')
+    const r = spawnSync('runuser', ['-u', 'nobody', '--', process.execPath, cli, 'reconcile', '--bill', bill, '--format', 'csv', '--db', copy], { encoding: 'utf8' })
+    chmodSync(ro, 0o755)
+    rmSync(ro, { recursive: true, force: true })
+    rmSync(bill, { force: true })
+    expect(r.status, r.stderr).toBe(0)
   })
 })

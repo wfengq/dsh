@@ -35,3 +35,12 @@
 ## 暂缓处理的小问题
 
 - Final: minor (deferred): read-only open in an unwritable dir fails on WAL -shm creation (retry with immutable=1 or hint); missingInBill prints 差异 — not 100%; "账本中没有这一行" wording when ledger has unpriced requests; --from > --to gives empty OK run; rows outside --from/--to filtered silently; unknown subcommand usage to stdout; date regex accepts 2026-13-45; refunds/negative amounts unsupported; empty currency cell ignores --currency; unterminated quote swallows rest of file; tolerance compared after 6-dp rounding; CI actions@v4 on Node 20, push+pull_request double runs, schedule/push share concurrency group; channel script: minimum() only strips ~^=, null version with --framework but no --registry-version, peer ranges never checked against channel version; packaging test uses npm pack (doesn't verify workspace: rewriting) and doesn't clean lib/; no tests for holidayCalendarMissing/unknownUsage hints in compare/CLI
+
+## 后续处理（2026-10-11）
+
+上面“暂缓处理的小问题”已全部处理，每一项都先写了失败的测试：
+- 对账：退款金额、空币种单元格回退到 `--currency`、引号未闭合时报错、按精确比例判定容差、只有一边有数据的行显示 100%、`--from` 晚于 `--to` 和无效日期报参数错误、报告说明不在日期范围内的账单行数、未知命令的用法输出到 stderr、不可写目录中的账本可以只读打开（没有 `-wal` 时用 immutable 方式）。
+- CI：`actions/checkout`、`actions/setup-node` 升到 v5；push 只在 main 上触发，避免 PR 分支每次提交跑两遍；并发组加入事件名。
+- 版本切换脚本：无法化为单一版本的范围直接报错；拿不到 dsh 版本时报错；渠道版本不在本仓库声明的 dsh peer 范围内时以退出码 3 失败（不再静默通过）。
+- 打包测试：检查发布清单里没有 `workspace:`（用 `pnpm pack`），以及没有来自已删除源文件的旧构建产物。
+- 对账的 `holidayCalendarMissing`、`unknownUsage` 提示补了测试。

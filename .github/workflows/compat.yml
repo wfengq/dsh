@@ -2,16 +2,18 @@ name: compat
 
 # Runs the whole suite against the dsh versions behind the `latest` and `alpha` npm dist-tags.
 # The daily schedule picks up new dsh releases (there is no publish webhook to listen to).
+# Pushes to main and pull requests only: a branch with an open PR would otherwise run twice per commit.
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
     - cron: '17 1 * * *'
 
+# The event is part of the key so a scheduled run and a push to main do not cancel each other.
 concurrency:
-  group: compat-${{ github.ref }}
+  group: compat-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -23,11 +25,11 @@ jobs:
       matrix:
         channel: [latest, alpha]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22.19.0
       - name: Use dsh ${{ matrix.channel }}

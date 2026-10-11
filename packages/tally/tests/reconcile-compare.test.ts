@@ -113,3 +113,26 @@ describe('final review fixes: compare and ledger', () => {
     expect(days.find(d => d.model === 'deepseek-flash')).toMatchObject({ amount: '5', unpricedCount: 0 })
   })
 })
+
+describe('deferred minors: compare', () => {
+  it('grades the tolerance on the exact ratio, not the rounded one', () => {
+    // 1.0000004% off: the ratio rounds to 0.01 but is over it
+    const r = compare([{ day: 'd', model: 'm', currency: 'CNY', amount: '1.010000004', requestCount: 1, unpricedCount: 0, unknownUsageCount: 0, holidayMissingCount: 0 }],
+      [bill('d', 'm', '1')])
+    expect(r.rows[0]).toMatchObject({ diffRatio: '0.01', withinTolerance: false })
+  })
+
+  it('explains differences with unknown-usage and missing-calendar counts', () => {
+    const r = compare([{ day: 'd', model: 'm', currency: 'CNY', amount: '1', requestCount: 3, unpricedCount: 0, unknownUsageCount: 1, holidayMissingCount: 2 }],
+      [bill('d', 'm', '2')])
+    expect(r.rows[0]!.hints).toEqual(['unknownUsage:1', 'holidayCalendarMissing:2'])
+  })
+})
+
+describe('deferred minors: report', () => {
+  it('prints 100% for a line the bill does not have', async () => {
+    const { formatReport } = await import('../src/reconcile/report.js')
+    const r = compare([{ day: 'd', model: 'm', currency: 'CNY', amount: '1', requestCount: 1, unpricedCount: 0, unknownUsageCount: 0, holidayMissingCount: 0 }], [])
+    expect(formatReport(r)).toMatch(/m.*差异 100\.00%/)
+  })
+})

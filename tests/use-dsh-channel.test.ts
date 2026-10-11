@@ -58,3 +58,25 @@ describe('use-dsh-channel', () => {
     expect(r.stderr).toContain('用法')
   })
 })
+
+describe('use-dsh-channel guards', () => {
+  const run = (...args: string[]) => spawnSync(process.execPath, [script, ...args, '--root', root], { encoding: 'utf8' })
+
+  it('refuses a framework range it cannot reduce to one version', () => {
+    const r = run('alpha', '--registry-version', '0.2.1-alpha.2', '--framework', '@deepseek-ai/cordis=>=4.0.5 <4.1.0')
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('@deepseek-ai/cordis')
+  })
+
+  it('refuses to run without a dsh version', () => {
+    const r = run('alpha', '--registry-version', '', '--framework', '@deepseek-ai/cordis=~4.0.5')
+    expect(r.status).toBe(2)
+  })
+
+  it('fails when the channel version is outside our peer ranges', () => {
+    const r = run('next', '--registry-version', '0.3.0-alpha.1')
+    expect(r.status).toBe(3)
+    expect(r.stderr).toContain('@deepseek-ai/dsh-session')
+    expect(r.stderr).toContain('>=0.2.0-0 <0.3.0-0')
+  })
+})

@@ -9,7 +9,7 @@ const HINTS: Record<string, string> = {
 
 function hintText(hint: string): string {
   if (hint === 'missingInBill') return '账单中没有这一行'
-  if (hint === 'missingInLedger') return '账本中没有这一行'
+  if (hint === 'missingInLedger') return '账本中没有可比的金额'
   const [name, count] = hint.split(':')
   return `${HINTS[name!] ?? name} ${count} 次`
 }
@@ -24,7 +24,9 @@ function percent(ratio: string | null): string {
 
 function line(r: ReconcileRow): string {
   const hints = r.hints.length > 0 ? `（${r.hints.map(hintText).join('；')}）` : ''
-  return `  ${r.day}  ${r.model}  ${r.currency ?? '—'}  账本 ${r.ours ?? '—'}  账单 ${r.bill ?? '—'}  差额 ${r.diff}  差异 ${percent(r.diffRatio)}${hints}`
+  // A line on one side only is a 100% difference (the ratio itself is undefined without a bill amount).
+  const ratio = r.diffRatio ?? (r.ours !== null && r.bill === null ? '1' : null)
+  return `  ${r.day}  ${r.model}  ${r.currency ?? '—'}  账本 ${r.ours ?? '—'}  账单 ${r.bill ?? '—'}  差额 ${r.diff}  差异 ${percent(ratio)}${hints}`
 }
 
 /**

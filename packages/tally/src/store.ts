@@ -133,6 +133,28 @@ function openDatabase(path: string): DatabaseSync {
   }
 }
 
+/**
+ * A read-only handle. A WAL database still needs its `-shm` file, which SQLite creates next to
+ * the database even for readers; in a directory the reader cannot write to (a backup, another
+ * user's DSH_HOME) that fails. Without a `-wal` file there is nothing uncheckpointed, so the file
+ * is then opened as immutable; with one, reading it would skip recent entries, so it is an error.
+ */
+function openReadOnlyHandle(path: string): DatabaseSync {
+  let db: DatabaseSync | undefined
+  try {
+    db = new sqlite.DatabaseSync(path, { readOnly: true })
+    db.prepare('PRAGMA user_version').get()
+    return db
+  } catch (error) {
+    db?.close()
+    if (!/readonly|unable to open/i.test(String((error as Error)?.message))) throw error
+    if (existsSync(path + '-wal')) {
+      throw new Error(`账本所在目录不可写，无法读取 WAL 模式的数据库：${path}（请把数据库连同 -wal 文件复制到可写目录后再对账）`)
+    }
+    return new sqlite.DatabaseSync(`file:${encodeURI(path)}?immutable=1`, { readOnly: true })
+  }
+}
+
 /** The ledger is rebuildable from session logs, so a broken file is set aside, not repaired. */
 function quarantine(path: string): void {
   const suffix = `.corrupt-${Date.now()}`
@@ -159,7 +181,7 @@ export class TallyStore {
    */
   static openReadOnly(path: string): TallyStore {
     if (!existsSync(path)) throw new Error('找不到账本数据库：' + path)
-    const db = new sqlite.DatabaseSync(path, { readOnly: true })
+    const db = openReadOnlyHandle(path)
     try {
       db.exec('PRAGMA busy_timeout = 5000')
       const row = db.prepare('PRAGMA user_version').get() as { user_version: number }

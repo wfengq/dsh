@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -27,6 +29,25 @@ describe.each(Object.entries(PACKAGES))('package %s', (dir, entries) => {
 
   it('ships no sources or tests', () => {
     expect(files.filter(f => f.startsWith('src/') || f.startsWith('tests/') || /\.test\./.test(f))).toEqual([])
+  })
+
+  it('ships no stale build output (every lib module comes from a current source file)', () => {
+    const stale = files.filter(f => /^lib\/.*\.js$/.test(f) && f !== 'lib/client.js')
+      .filter(f => !existsSync(`${root}packages/${dir}/src/${f.slice(4).replace(/\.js$/, '.ts')}`)
+        && !existsSync(`${root}packages/${dir}/src/${f.slice(4).replace(/\.js$/, '.tsx')}`))
+    expect(stale).toEqual([])
+  })
+
+  it('publishes real version ranges instead of workspace: links', () => {
+    const out = mkdtempSync(join(tmpdir(), 'dsh-pack-'))
+    try {
+      const packed = execFileSync('pnpm', ['pack', '--json', '--pack-destination', out], { cwd: `${root}packages/${dir}`, encoding: 'utf8' })
+      const tarball = (JSON.parse(packed) as { filename: string }).filename
+      const json = execFileSync('tar', ['-xOf', tarball, 'package/package.json'], { encoding: 'utf8' })
+      expect(json).not.toContain('workspace:')
+    } finally {
+      rmSync(out, { recursive: true, force: true })
+    }
   })
 
   it('carries release metadata', () => {

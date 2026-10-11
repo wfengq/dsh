@@ -38,6 +38,12 @@ class UsageError extends Error {}
 /** The plugin's default route mapping (see `Config.providerRoutes` in ./index.ts). */
 const DEFAULT_ROUTES: Record<string, string> = { 'deepseek-official': 'deepseek', 'deepseek-account': 'deepseek' }
 
+function isCalendarDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false
+  const t = new Date(s + 'T00:00:00Z')
+  return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === s
+}
+
 function pairs(list: string[] | undefined, what: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const item of list ?? []) {
@@ -51,8 +57,12 @@ function pairs(list: string[] | undefined, what: string): Record<string, string>
 function main(argv: string[]): number {
   const [command, ...rest] = argv
   if (command !== 'reconcile') {
-    process.stdout.write(USAGE)
-    return command === undefined || command === '--help' ? 0 : 2
+    if (command === undefined || command === '--help') {
+      process.stdout.write(USAGE)
+      return 0
+    }
+    process.stderr.write(`未知的命令：${command}\n\n${USAGE}`)
+    return 2
   }
   const { values } = parseArgs({
     args: rest,
@@ -76,7 +86,10 @@ function main(argv: string[]): number {
   }
   if (!/^\d+(\.\d+)?$/.test(values.tolerance!)) throw new UsageError(`容差应为非负小数：${values.tolerance}`)
   for (const d of [values.from, values.to]) {
-    if (d !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new UsageError(`日期格式应为 YYYY-MM-DD：${d}`)
+    if (d !== undefined && !isCalendarDate(d)) throw new UsageError(`日期应为有效的 YYYY-MM-DD：${d}`)
+  }
+  if (values.from !== undefined && values.to !== undefined && values.from > values.to) {
+    throw new UsageError(`--from（${values.from}）不能晚于 --to（${values.to}）`)
   }
   const columns = pairs(values.column, '--column') as Partial<Record<BillColumn, string>>
   for (const k of Object.keys(columns)) {
@@ -110,14 +123,16 @@ function main(argv: string[]): number {
     }
     if (!Array.isArray(overrides)) throw new UsageError(`价格覆盖文件应为 JSON 数组：${values.overrides}`)
   }
+  if (from > to) throw new UsageError(`对账日期范围为空：${from} 晚于 ${to}`)
   const bill = parsed.rows.filter(r => r.day >= from && r.day <= to)
+  const outOfRange = parsed.rows.length - bill.length
   const ledger = ledgerDaily({
     dbPath: values.db ?? dshHomePath('tally', 'tally.v1.sqlite'), from, to, tz: values.tz!, providerRoutes: routes, overrides,
   })
   const report = compare(ledger, bill, values.tolerance)
   process.stdout.write(values.json
-    ? JSON.stringify({ ...report, skipped: parsed.skipped, routes }, null, 2) + '\n'
-    : formatReport(report, parsed.skipped, routes))
+    ? JSON.stringify({ ...report, skipped: parsed.skipped, routes, outOfRange }, null, 2) + '\n'
+    : formatReport(report, parsed.skipped, routes) + (outOfRange > 0 ? `（账单中另有 ${outOfRange} 行不在对账日期范围内，未参与对账。）\n` : ''))
   return report.rows.every(r => r.withinTolerance) && parsed.skipped.length === 0 ? 0 : 1
 }
 

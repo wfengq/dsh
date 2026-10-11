@@ -37,6 +37,8 @@ export interface ReconcileReport {
 const MICRO = 1_000_000n
 const SCALE = 10n ** 18n
 
+const abs = (x: bigint) => (x < 0n ? -x : x)
+
 /** `|diff| / bill` in millionths, rounded half-up. */
 function ratioMicro(diff: bigint, bill: bigint): bigint {
   const abs = diff < 0n ? -diff : diff
@@ -49,7 +51,7 @@ function formatMicro(micro: bigint): string {
 
 /** Join the ledger and the bill on (day, model, currency) and grade each line against `tolerance`. */
 export function compare(ledger: LedgerDay[], bill: BillRow[], tolerance = '0.01'): ReconcileReport {
-  const toleranceMicro = unitsOf(tolerance) / (SCALE / MICRO)
+  const toleranceUnits = unitsOf(tolerance)
   const key = (day: string, model: string, currency: Currency) => `${day}\u0000${model}\u0000${currency}`
   const billSums = new Map<string, { day: string; model: string; currency: Currency; units: bigint }>()
   for (const b of bill) {
@@ -90,7 +92,8 @@ export function compare(ledger: LedgerDay[], bill: BillRow[], tolerance = '0.01'
       bill: b ? formatUnits(billUnits) : null,
       diff: formatUnits(diff),
       diffRatio: ratio === null ? null : formatMicro(ratio),
-      withinTolerance: !!l && !!b && (ratio === null ? diff === 0n : ratio <= toleranceMicro),
+      // Graded on the exact ratio |diff| / bill <= tolerance; diffRatio is only the rounded display.
+      withinTolerance: !!l && !!b && (billUnits > 0n ? abs(diff) * SCALE <= toleranceUnits * billUnits : diff === 0n),
       hints,
     })
   }

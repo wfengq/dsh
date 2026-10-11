@@ -46,6 +46,7 @@ export function parseCsvRecords(text: string): CsvRecord[] {
     } else field += ch
     i++
   }
+  if (quoted) throw new Error(`第 ${start} 行的引号没有闭合`)
   if (field !== '' || row.length > 0) endRow()
   return records
 }

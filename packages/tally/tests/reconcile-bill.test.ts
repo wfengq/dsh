@@ -75,3 +75,19 @@ describe('final review fixes: bill parsing', () => {
     expect(r.rows[0]!.amount).toBe('12345.6')
   })
 })
+
+describe('deferred minors: bill parsing', () => {
+  it('reads refunds as negative amounts', () => {
+    const r = genericCsv.parse('日期,模型,金额,币种\n2026-10-09,a,-1.50,CNY\n2026-10-09,b,(2.00),CNY\n2026-10-09,c,"¥-1,000",CNY\n', {})
+    expect(r.rows.map(x => x.amount)).toEqual(['-1.5', '-2', '-1000'])
+  })
+
+  it('falls back to --currency when a currency cell is empty', () => {
+    const r = genericCsv.parse('日期,模型,金额,币种\n2026-10-09,a,1,\n', { currency: 'USD' })
+    expect(r.rows[0]!.currency).toBe('USD')
+  })
+
+  it('fails on an unterminated quote with the line it starts on', () => {
+    expect(() => parseCsv('a,b\n1,"oops\n2,3\n')).toThrow('第 2 行的引号没有闭合')
+  })
+})

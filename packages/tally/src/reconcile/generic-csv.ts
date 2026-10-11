@@ -30,11 +30,15 @@ function parseDay(raw: string): string | null {
  * threes, so a malformed "1,2" is rejected rather than read as 12 — and normalize; null if not a decimal.
  */
 function parseMoney(raw: string): string | null {
-  const bare = raw.replace(/[¥￥$\s]/g, '')
+  let bare = raw.replace(/[¥￥$\s]/g, '')
+  // Refunds: a leading minus sign or accounting parentheses, e.g. "-1.50" or "(1.50)".
+  let negative = false
+  if (/^\(.*\)$/.test(bare)) { negative = true; bare = bare.slice(1, -1) }
+  if (bare.startsWith('-')) { negative = !negative; bare = bare.slice(1) }
   if (bare.includes(',') && !/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(bare)) return null
-  const cleaned = bare.replaceAll(',', '')
   try {
-    return formatFixed(parseAmount(cleaned))
+    const amount = formatFixed(parseAmount(bare.replaceAll(',', '')))
+    return negative && amount !== '0' ? '-' + amount : amount
   } catch {
     return null
   }
@@ -65,7 +69,8 @@ export const genericCsv: BillParser = {
       if (day === null) return void result.skipped.push({ line, reason: `无法解析日期：${fields[at.day] ?? ''}` })
       const amount = parseMoney(fields[at.amount] ?? '')
       if (amount === null) return void result.skipped.push({ line, reason: `无法解析金额：${fields[at.amount] ?? ''}` })
-      const currency = at.currency >= 0 ? (fields[at.currency] ?? '').trim().toUpperCase() : options.currency!
+      const cell = at.currency >= 0 ? (fields[at.currency] ?? '').trim().toUpperCase() : ''
+      const currency = cell !== '' ? cell : options.currency ?? ''
       if (!isCurrency(currency)) return void result.skipped.push({ line, reason: `不支持的币种：${currency}` })
       const rawModel = (fields[at.model] ?? '').trim()
       if (rawModel === '') return void result.skipped.push({ line, reason: '模型为空' })
