@@ -21,7 +21,7 @@ dsh-trust-check 之类按能力扫描代码的工具会把本包标红，原因�
 
 ## 只访问哪个域名
 
-- **API key 路由**（`deepseek-official`）只请求 `GET {baseURL}/user/balance`。`baseURL` 默认是 `https://api.deepseek.com`，也就是只访问 `api.deepseek.com`；只有你自己改了 `baseURL`，才会访问别的地址。请求只带 `Authorization` 和 `Accept` 两个头。
+- **API key 路由**（`deepseek-official`）只请求 `GET /user/balance`，目标是 `baseURL` 的源（协议、主机和端口），`baseURL` 里的路径部分会被忽略。`baseURL` 默认是 `https://api.deepseek.com`，也就是只访问 `api.deepseek.com`；只有你自己改了 `baseURL`，才会访问别的地址。插件自己只设置 `Authorization` 和 `Accept` 两个请求头，HTTP 客户端会再加上标准的请求头（如 `Host`、`User-Agent`）。
 - **账号路由**（`deepseek-account`）不自己发请求，而是调用官方 `deepseekAccount` 服务的 `getBalance`，登录态和请求都由官方服务管理。
 - 除此之外没有任何其他网络访问，也不写任何文件。
 
@@ -59,6 +59,7 @@ dsh plugin --profile web add dsh-tally dsh-tally-balance-deepseek
 | `DEEPSEEK_API_KEY not configured` | 凭据服务里找不到 API key。 |
 | `DeepSeek balance: HTTP 401` | 接口返回非 2xx（状态码随实际情况）。 |
 | `DeepSeek balance: request failed` | 网络错误。 |
+| `DeepSeek balance: invalid baseURL` | `baseURL` 不是合法的 URL。 |
 | `DeepSeek balance: invalid JSON response` | 响应不是 JSON。 |
 | `DeepSeek balance: unexpected response shape` | 响应的结构不符合预期。 |
 | `DeepSeek account: signed out` | 官方账号未登录。 |

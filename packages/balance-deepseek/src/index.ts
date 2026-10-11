@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import Schema from '@deepseek-ai/schemastery'
 import type {} from 'dsh-tally-api'
 import { accountFetcher, apiKeyFetcher } from './fetchers.js'
@@ -39,7 +39,7 @@ export function apply(ctx: Context, config: Config) {
         config.officialRoute,
         apiKeyFetcher({
           baseURL: config.baseURL,
-          resolveKey: async () => (await c.credentials.resolve(credentialRef(config.apiKeyRef)))?.value,
+          resolveKey: async () => (await c.credentials.resolve(config.apiKeyRef as CredentialRef))?.value,
         }),
       ),
       'tally balance: ' + config.officialRoute,

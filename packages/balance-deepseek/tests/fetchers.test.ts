@@ -109,6 +109,35 @@ describe('apiKeyFetcher', () => {
     expect(error.cause).toBeUndefined()
   })
 
+  it('reports a malformed baseURL as a configuration error, not a network failure', async () => {
+    let called = false
+    const spy: typeof fetch = async () => { called = true; return new Response('{}') }
+    const error = await errorOf(apiKeyFetcher({ baseURL: 'not a url', resolveKey: async () => KEY, fetch: spy })(signal()))
+    expect(error.message).toBe('DeepSeek balance: invalid baseURL')
+    expect(error.message).not.toContain(KEY)
+    expect(called).toBe(false)
+  })
+
+  it('cancels the body of a non-2xx response', async () => {
+    let cancelled = false
+    const body = new ReadableStream({ cancel() { cancelled = true } })
+    const stub: typeof fetch = async () => new Response(body, { status: 503 })
+    const error = await errorOf(apiKeyFetcher({ baseURL, resolveKey: async () => KEY, fetch: stub })(signal()))
+    expect(error.message).toBe('DeepSeek balance: HTTP 503')
+    expect(cancelled).toBe(true)
+  })
+
+  it('throws the signal reason, not the transport error, when aborted', async () => {
+    const controller = new AbortController()
+    const racing: typeof fetch = async (_input, init) => {
+      controller.abort(new Error('timed out'))
+      throw new TypeError(`transport said ${JSON.stringify(init?.headers)}`)
+    }
+    const error = await errorOf(apiKeyFetcher({ baseURL, resolveKey: async () => KEY, fetch: racing })(controller.signal))
+    expect(error.message).toBe('timed out')
+    expect(error.message).not.toContain(KEY)
+  })
+
   it('surfaces an abort with its own reason', async () => {
     respond = () => { /* never answer */ }
     const controller = new AbortController()

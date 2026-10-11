@@ -22,24 +22,36 @@ export function apiKeyFetcher(opts: ApiKeyFetcherOptions): BalanceFetcher {
     const key = await opts.resolveKey()
     if (!key) throw new Error('DEEPSEEK_API_KEY not configured')
 
+    let url: URL
+    try {
+      url = new URL('/user/balance', opts.baseURL)
+    } catch {
+      throw new Error('DeepSeek balance: invalid baseURL')
+    }
+
     let res: Response
     try {
-      res = await doFetch(new URL('/user/balance', opts.baseURL), {
+      res = await doFetch(url, {
         headers: { Authorization: 'Bearer ' + key, Accept: 'application/json' },
         signal,
       })
-    } catch (error) {
-      // An abort (timeout or shutdown) keeps its own reason so callers can tell it apart.
-      if (signal.aborted) throw error
+    } catch {
+      // An abort (timeout or shutdown) keeps its own reason so callers can tell it apart;
+      // anything else is replaced, because its text is not under our control.
+      if (signal.aborted) throw signal.reason
       throw new Error('DeepSeek balance: request failed')
     }
-    if (!res.ok) throw new Error('DeepSeek balance: HTTP ' + res.status)
+    if (!res.ok) {
+      // Release the connection; the body is never read or reported.
+      try { await res.body?.cancel() } catch { /* nothing to release */ }
+      throw new Error('DeepSeek balance: HTTP ' + res.status)
+    }
 
     let json: unknown
     try {
       json = await res.json()
-    } catch (error) {
-      if (signal.aborted) throw error
+    } catch {
+      if (signal.aborted) throw signal.reason
       throw new Error('DeepSeek balance: invalid JSON response')
     }
     return parseApiBalance(json)

@@ -126,6 +126,17 @@ describe('dsh-tally-balance-deepseek plugin', () => {
     expect(rec.registered.size).toBe(0)
   })
 
+  it('unregisters both routes when the plugin itself is disposed', async () => {
+    await load(ctx.plugin(FakeTallyBalance, rec))
+    const fiber = await load(ctx.plugin(plugin, plugin.Config({ baseURL })))
+    await load(ctx.plugin(FakeCredentials, credentialValues))
+    await load(ctx.plugin(FakeAccount, accountCalls))
+    expect(rec.registered.size).toBe(2)
+    await fiber.dispose()
+    expect(rec.registered.size).toBe(0)
+    expect([...rec.unregistered].sort()).toEqual(['deepseek-account', 'deepseek-official'])
+  })
+
   it('fetches the official balance through the registered fetcher', async () => {
     await mount()
     await load(ctx.plugin(FakeCredentials, credentialValues))
