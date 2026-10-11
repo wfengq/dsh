@@ -107,6 +107,7 @@ export class TallyUsage extends Service implements UsageService {
     // backfill or rebuild settled (a backfill finishes recording the batch it already read).
     ctx.effect(() => async () => {
       state.lifetime.abort(new Error('dsh-tally: tallyUsage disposed'))
+      state.observers.clear()
       for (;;) {
         const run = state.run
         await Promise.allSettled([run?.done, state.rebuilding])
@@ -275,6 +276,8 @@ export class TallyUsage extends Service implements UsageService {
   }
 
   private notifyProgress(): void {
+    // After disposal nobody observes anymore, and the service may no longer be usable.
+    if (this.state.lifetime.signal.aborted) return
     for (const observer of [...this.state.observers]) {
       try {
         observer()

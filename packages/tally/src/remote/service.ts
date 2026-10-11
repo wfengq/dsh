@@ -29,6 +29,8 @@ interface WatchState {
   wake: (() => void) | undefined
   lastStatusAt: number
   timer: ReturnType<typeof setTimeout> | undefined
+  /** The stream was closed from outside (the service was disposed): it ends at once. */
+  closed: boolean
 }
 
 /** Decodes a request with the contract's schema; a malformed one fails as `gateway/bad-request`. */
@@ -56,8 +58,23 @@ function decode<Schema extends z.ZodType>(schema: Schema, request: unknown): z.o
 export class TallyRemote extends TypertRemoteService {
   static inject = ['tallyUsage', 'tallyPricing', 'tallyBalance', 'tallyBudget']
 
+  /** Open `watch` streams, closed when the service is disposed. */
+  private readonly watchers = new Set<WatchState>()
+
   constructor(ctx: Context) {
     super(ctx, 'tallyRemote', { namespace: 'tally' })
+    const watchers = this.watchers
+    ctx.effect(() => () => {
+      for (const state of [...watchers]) {
+        state.closed = true
+        if (state.timer !== undefined) clearTimeout(state.timer)
+        state.timer = undefined
+        const resolve = state.wake
+        state.wake = undefined
+        resolve?.()
+      }
+      watchers.clear()
+    }, 'tallyRemote watch streams')
   }
 
   // Inside dsh-tally these services are always this package's own implementations.
@@ -170,20 +187,25 @@ export class TallyRemote extends TypertRemoteService {
    * order they happen, plus `status` frames (at most one per second) while a backfill or
    * rebuild runs and once more when it ends. The queue holds at most `WATCH_QUEUE_LIMIT`
    * frames; past that the oldest are dropped and a fresh `hello` precedes the next dequeue,
-   * so the client refreshes everything. Aborting `signal` ends the stream and removes every
+   * so the client refreshes everything. The hello is taken when the stream is first pulled,
+   * and frames queued before an overflow-hello may predate it: a client must refetch its
+   * data on every hello instead of applying queued deltas cumulatively. Disposing the
+   * service ends every open stream. Aborting `signal` ends the stream and removes every
    * listener and timer.
    */
   @Remote({ mode: 'stream' })
   async *watch(signal: AbortSignal): AsyncIterable<TallyWatchFrame> {
     if (signal.aborted) return
     // Plain object: the service may run behind a cordis proxy.
-    const state: WatchState = { queue: [], overflowed: false, wake: undefined, lastStatusAt: -Infinity, timer: undefined }
+    const state: WatchState = { queue: [], overflowed: false, wake: undefined, lastStatusAt: -Infinity, timer: undefined, closed: false }
     const wake = (): void => {
       const resolve = state.wake
       state.wake = undefined
       resolve?.()
     }
+    this.watchers.add(state)
     const push = (frame: TallyWatchFrame): void => {
+      if (state.closed) return
       state.queue.push(frame)
       if (state.queue.length > WATCH_QUEUE_LIMIT) {
         state.queue.shift()
@@ -193,12 +215,13 @@ export class TallyRemote extends TypertRemoteService {
     }
     const pushStatus = (): void => {
       state.timer = undefined
+      if (state.closed) return
       state.lastStatusAt = Date.now()
       push({ type: 'status', status: this.statusView() })
     }
     // Progress changes are coalesced: one status frame per interval, always showing the latest state.
     const onProgress = (): void => {
-      if (state.timer !== undefined) return
+      if (state.closed || state.timer !== undefined) return
       const due = state.lastStatusAt + WATCH_STATUS_INTERVAL_MS - Date.now()
       if (due <= 0) pushStatus()
       else state.timer = setTimeout(pushStatus, due)
@@ -212,7 +235,7 @@ export class TallyRemote extends TypertRemoteService {
     signal.addEventListener('abort', wake, { once: true })
     try {
       yield { type: 'hello', status: this.statusView() }
-      while (!signal.aborted) {
+      while (!signal.aborted && !state.closed) {
         if (state.overflowed) {
           state.overflowed = false
           yield { type: 'hello', status: this.statusView() }
@@ -226,6 +249,8 @@ export class TallyRemote extends TypertRemoteService {
         await new Promise<void>((resolve) => { state.wake = resolve })
       }
     } finally {
+      state.closed = true
+      this.watchers.delete(state)
       for (const stop of stops) stop()
       if (state.timer !== undefined) clearTimeout(state.timer)
       signal.removeEventListener('abort', wake)

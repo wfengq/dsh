@@ -142,4 +142,47 @@ describe('tally/watch', () => {
     for (let i = 1; i < seen.length; i++) expect(seen[i]!.at - seen[i - 1]!.at).toBeGreaterThanOrEqual(1000)
     expect(seen.at(-1)!.backfill).toBeNull()
   })
+
+  it('ends open streams when the plugin is disposed, without uncaught errors', async () => {
+    const errors: unknown[] = []
+    const onError = (e: unknown) => { errors.push(e) }
+    process.on('uncaughtException', onError)
+    process.on('unhandledRejection', onError)
+    try {
+      const it = remote.watch(new AbortController().signal)[Symbol.asyncIterator]()
+      expect((await it.next()).value.type).toBe('hello')
+      const pending = it.next()
+      await fiber.dispose()
+      expect(await pending).toEqual({ value: undefined, done: true })
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(errors).toEqual([])
+    } finally {
+      process.off('uncaughtException', onError)
+      process.off('unhandledRejection', onError)
+    }
+  })
+
+  it('leaves no timer or progress observer behind when aborted mid-rebuild', async () => {
+    const query = ctx.get('sessionQuery') as unknown as FakeSessionQuery
+    query.ids = ['a', 'b']
+    let release!: () => void
+    query.gate = new Promise<void>(resolve => { release = resolve })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    vi.setSystemTime(new Date('2026-10-20T00:00:00Z'))
+    const observers = (ctx.tallyUsage as unknown as { state: { observers: Set<unknown> } }).state.observers
+    const ac = new AbortController()
+    const reader = (async () => { for await (const _ of remote.watch(ac.signal)) { /* drain */ } })()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(observers.size).toBe(1)
+    const rebuilding = ctx.tallyUsage.rebuild()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    ac.abort()
+    await reader
+    expect(vi.getTimerCount()).toBe(0)
+    expect(observers.size).toBe(0)
+    release()
+    await rebuilding
+    expect(vi.getTimerCount()).toBe(0)
+  })
 })
