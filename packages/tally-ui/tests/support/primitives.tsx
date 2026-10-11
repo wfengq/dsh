@@ -73,3 +73,37 @@ export function SegmentedControl<Value extends string>(
     </div>
   )
 }
+
+/** A labelled checkbox standing in for the real switch. */
+export function Switch({ checked, onChange, label, disabled, title }: {
+  checked: boolean
+  onChange: (next: boolean) => void
+  label: string
+  disabled?: boolean
+  title?: string | undefined
+  className?: string | undefined
+}) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} aria-label={label} title={title} disabled={disabled} onClick={() => { onChange(!checked) }} />
+  )
+}
+
+export const Input = forwardRef<HTMLInputElement, ComponentPropsWithoutRef<'input'> & { icon?: ReactNode }>(
+  function Input({ icon: _icon, ...rest }, ref) {
+    return <input ref={ref} {...rest} />
+  },
+)
+
+/** Renders its content while open, as a labelled dialog. */
+export function Modal({ open, onClose: _onClose, title, children, footer }: {
+  open: boolean
+  onClose: () => void
+  title: string
+  description?: string
+  children?: ReactNode
+  footer?: ReactNode
+  closeLabel?: string
+  headless?: boolean
+}) {
+  return open ? <div role="dialog" aria-modal="true" aria-label={title}>{children}{footer}</div> : null
+}

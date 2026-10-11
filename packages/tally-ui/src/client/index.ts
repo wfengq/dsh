@@ -22,6 +22,7 @@ import { Dashboard, type DashboardInjected } from './dashboard/Dashboard.tsx'
 import { tabDefinition, TAB_ID } from './dashboard/definition.ts'
 import { elementsOf, type ElementsFormSnapshot } from './elements.ts'
 import { en, NS, zh, type TallyLocaleKey } from './locales.ts'
+import { Section, type SectionInjected } from './settings/Section.tsx'
 import { SessionTotal, type SessionTotalInjected } from './SessionTotal.tsx'
 import { createTallyStore } from './store.ts'
 import { TurnCost, type TurnCostInjected } from './TurnCost.tsx'
@@ -42,6 +43,7 @@ const TURN_TAIL = 'conversation.chat.turnTail'
 const UTILITIES = 'conversation.session.header.utilities'
 const OVERLAY = 'shell.overlay'
 const SIDEBAR_TAB = 'sidebar.right.pane.tab'
+const SETTINGS_SECTION = 'settings.section'
 
 /** The value of a call, or `null` when it was refused or the transport failed. */
 async function valueOf<T>(call: Promise<RemoteResult<T>>): Promise<T | null> {
@@ -128,6 +130,24 @@ export async function apply(ctx: Context): Promise<void> {
       locale: NS,
       inject: (): BudgetToastInjected => ({ hooks: { elements, alerts: store.alerts }, dismissAlert }),
     }, BudgetToast))
+
+    scope.slots.inject(SETTINGS_SECTION, () => {
+      const t = scope.locale.bind(NS)
+      const face: SectionInjected = {
+        remote,
+        overridesForm: scope.configForms.get<never>('tally'),
+        elementsForm: scope.configForms.get<never>(ENTRY_ID),
+        status: store.status,
+      }
+      return scope.slots.register({
+        name: SETTINGS_SECTION,
+        id: 'tally',
+        order: 50,
+        label: () => t('settings.nav'),
+        locale: NS,
+        inject: (): SectionInjected => face,
+      }, Section)
+    })
 
     // The dashboard tab exists only while `elements.sidebarTab` is on: the switch registers and withdraws it.
     // It needs the right sidebar's registry; a host without it keeps every other element.

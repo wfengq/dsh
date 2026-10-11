@@ -111,8 +111,10 @@ describe('dsh-tally-ui browser plugin', () => {
       'conversation.chat.turnTail': 'tally.turn',
       'conversation.session.header.utilities': 'tally.total',
       'shell.overlay': 'tally.budget',
+      'settings.section': 'tally',
     })
-    expect(registrations).toHaveLength(5)
+    expect(registrations).toHaveLength(6)
+    expect(registrations.find(r => r.name === 'settings.section')).toMatchObject({ order: 50 })
     expect(registrations.every(r => r.locale === 'tally')).toBe(true)
   })
 
@@ -136,7 +138,7 @@ describe('dsh-tally-ui browser plugin', () => {
   it('keeps the conversation elements when the host has no right sidebar', async () => {
     const { ctx, registrations, live } = fakeContext({ sidebar: false })
     await apply(ctx as never)
-    expect(registrations.map(r => r.id).filter(Boolean).sort()).toEqual(['tally.budget', 'tally.dock', 'tally.total', 'tally.turn'])
+    expect(registrations.map(r => r.id).filter(Boolean).sort()).toEqual(['tally', 'tally.budget', 'tally.dock', 'tally.total', 'tally.turn'])
     expect(live).toEqual({ bodies: 0, types: 0 })
   })
 
