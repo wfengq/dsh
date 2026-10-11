@@ -119,6 +119,14 @@ export interface TallyStatusView {
   balanceRoutes: string[]
 }
 
+/** One frame of the `tally/watch` stream. `hello` is always first and again whenever the client must refresh everything. */
+export type TallyWatchFrame =
+  | { type: 'hello'; status: TallyStatusView }
+  | { type: 'recorded'; entry: TallyEntry }
+  | { type: 'balance-changed'; snapshot: BalanceSnapshot }
+  | { type: 'budget-crossed'; alert: BudgetAlert }
+  | { type: 'status'; status: TallyStatusView }
+
 /** One session as the browser shows it: its usage plus where its latest request went. */
 export interface SessionView {
   usage: SessionUsage

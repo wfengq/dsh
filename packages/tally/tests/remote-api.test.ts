@@ -118,7 +118,7 @@ describe('tally Remote API', () => {
     await start()
     expect(TALLY_REMOTE.descriptors.map(d => d.method).sort()).toEqual([
       'balance', 'band', 'budgets', 'catalog', 'exportCsv', 'peakSavings', 'query', 'rebuild',
-      'refreshBalance', 'removeBudget', 'session', 'setBudget', 'status', 'turn',
+      'refreshBalance', 'removeBudget', 'session', 'setBudget', 'status', 'turn', 'watch',
     ])
     expect(Object.keys(schemas).sort()).toEqual(TALLY_REMOTE.descriptors.map(d => d.method).sort())
   })

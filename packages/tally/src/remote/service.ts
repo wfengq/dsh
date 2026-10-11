@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   BalanceSnapshot, BandView, Budget, CatalogView, PeakSavings, SessionView, TallyStatusView, TurnUsage,
-  UsageGroup, UsageQuery,
+  TallyWatchFrame, UsageGroup, UsageQuery,
 } from 'dsh-tally-api'
 import type { z } from 'zod'
 import type { TallyBalance } from '../balance-service.js'
@@ -15,6 +15,20 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     tallyRemote: TallyRemote
   }
+}
+
+/** Frames a `watch` stream may hold unread before it drops the oldest. */
+const WATCH_QUEUE_LIMIT = 1000
+/** Least time between two `status` frames of one `watch` stream. */
+const WATCH_STATUS_INTERVAL_MS = 1000
+
+interface WatchState {
+  queue: TallyWatchFrame[]
+  /** Frames were dropped: the next dequeue yields a fresh `hello` first. */
+  overflowed: boolean
+  wake: (() => void) | undefined
+  lastStatusAt: number
+  timer: ReturnType<typeof setTimeout> | undefined
 }
 
 /** Decodes a request with the contract's schema; a malformed one fails as `gateway/bad-request`. */
@@ -55,17 +69,23 @@ export class TallyRemote extends TypertRemoteService {
     return this.ctx.tallyPricing as TallyPricingService
   }
 
-  @Remote
-  async status(): Promise<TallyStatusView> {
+  /** The status view. `usage.backfill` is `null` unless a backfill or rebuild is in flight right now. */
+  private statusView(): TallyStatusView {
     const pricing = this.pricing()
     const balance = this.ctx.tallyBalance as TallyBalance
+    const usage = this.ctx.tallyUsage.status()
     return {
-      usage: this.ctx.tallyUsage.status(),
+      usage: this.usage().backfilling() ? usage : { ...usage, backfill: null },
       catalogVersion: pricing.catalogVersion(),
       pricingErrors: pricing.configErrors.map(e => e.message),
       budgetErrors: this.ctx.tallyBudget.status().errors,
       balanceRoutes: balance.routes(),
     }
+  }
+
+  @Remote
+  async status(): Promise<TallyStatusView> {
+    return this.statusView()
   }
 
   @Remote
@@ -143,5 +163,72 @@ export class TallyRemote extends TypertRemoteService {
   @Remote
   async rebuild(): Promise<void> {
     await this.usage().rebuild()
+  }
+
+  /**
+   * Live feed for the browser: `hello` first, then ledger, balance and budget events in the
+   * order they happen, plus `status` frames (at most one per second) while a backfill or
+   * rebuild runs and once more when it ends. The queue holds at most `WATCH_QUEUE_LIMIT`
+   * frames; past that the oldest are dropped and a fresh `hello` precedes the next dequeue,
+   * so the client refreshes everything. Aborting `signal` ends the stream and removes every
+   * listener and timer.
+   */
+  @Remote({ mode: 'stream' })
+  async *watch(signal: AbortSignal): AsyncIterable<TallyWatchFrame> {
+    if (signal.aborted) return
+    // Plain object: the service may run behind a cordis proxy.
+    const state: WatchState = { queue: [], overflowed: false, wake: undefined, lastStatusAt: -Infinity, timer: undefined }
+    const wake = (): void => {
+      const resolve = state.wake
+      state.wake = undefined
+      resolve?.()
+    }
+    const push = (frame: TallyWatchFrame): void => {
+      state.queue.push(frame)
+      if (state.queue.length > WATCH_QUEUE_LIMIT) {
+        state.queue.shift()
+        state.overflowed = true
+      }
+      wake()
+    }
+    const pushStatus = (): void => {
+      state.timer = undefined
+      state.lastStatusAt = Date.now()
+      push({ type: 'status', status: this.statusView() })
+    }
+    // Progress changes are coalesced: one status frame per interval, always showing the latest state.
+    const onProgress = (): void => {
+      if (state.timer !== undefined) return
+      const due = state.lastStatusAt + WATCH_STATUS_INTERVAL_MS - Date.now()
+      if (due <= 0) pushStatus()
+      else state.timer = setTimeout(pushStatus, due)
+    }
+    const stops = [
+      this.ctx.on('tally/recorded', entry => { push({ type: 'recorded', entry }) }),
+      this.ctx.on('tally/balance-changed', snapshot => { push({ type: 'balance-changed', snapshot }) }),
+      this.ctx.on('tally/budget-crossed', alert => { push({ type: 'budget-crossed', alert }) }),
+      this.usage().watchProgress(onProgress),
+    ]
+    signal.addEventListener('abort', wake, { once: true })
+    try {
+      yield { type: 'hello', status: this.statusView() }
+      while (!signal.aborted) {
+        if (state.overflowed) {
+          state.overflowed = false
+          yield { type: 'hello', status: this.statusView() }
+          continue
+        }
+        const frame = state.queue.shift()
+        if (frame !== undefined) {
+          yield frame
+          continue
+        }
+        await new Promise<void>((resolve) => { state.wake = resolve })
+      }
+    } finally {
+      for (const stop of stops) stop()
+      if (state.timer !== undefined) clearTimeout(state.timer)
+      signal.removeEventListener('abort', wake)
+    }
   }
 }

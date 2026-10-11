@@ -9,10 +9,10 @@
  * This module must stay browser-safe: it may import only zod and types.
  */
 import { z } from 'zod'
-import type { RemoteResult, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
+import type { RemoteResult, RemoteStreamHandle, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  BalanceSnapshot, BandView, Budget, CatalogView, PeakSavings, SessionView, TallyEntry, TallyStatusView,
-  TurnUsage, UsageGroup, UsageQuery,
+  BalanceSnapshot, BandView, Budget, BudgetAlert, CatalogView, PeakSavings, SessionView, TallyEntry, TallyStatusView,
+  TallyWatchFrame, TurnUsage, UsageGroup, UsageQuery,
 } from 'dsh-tally-api'
 
 const PACKAGE = 'dsh-tally'
@@ -95,6 +95,14 @@ const statusView = z.object({
   balanceRoutes: z.array(z.string()),
 }) satisfies z.ZodType<TallyStatusView>
 
+const budgetAlert = z.object({
+  budgetId: z.string(),
+  threshold: z.union([z.literal(0.8), z.literal(1)]),
+  spent: money,
+  limit: money,
+  periodStart: z.number(),
+}) satisfies z.ZodType<BudgetAlert>
+
 const usageQuery = z.object({
   ...range,
   groupBy: z.enum(['day', 'model', 'provider', 'workspace', 'session']),
@@ -165,6 +173,14 @@ const peakSavings = z.object({
   saving: z.array(money),
 }) satisfies z.ZodType<PeakSavings>
 
+const watchFrame = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('hello'), status: statusView }),
+  z.object({ type: z.literal('recorded'), entry: tallyEntry }),
+  z.object({ type: z.literal('balance-changed'), snapshot: balanceSnapshot }),
+  z.object({ type: z.literal('budget-crossed'), alert: budgetAlert }),
+  z.object({ type: z.literal('status'), status: statusView }),
+]) satisfies z.ZodType<TallyWatchFrame>
+
 const routeRequest = z.object({ route: text })
 
 /**
@@ -190,6 +206,7 @@ export const schemas = {
   peakSavings: { request: z.object(range).superRefine(checkRange), result: peakSavings },
   exportCsv: { request: z.object({ ...range, tz: timeZone }).superRefine(checkRange), result: z.string() },
   rebuild: { request: z.undefined(), result: z.void() },
+  watch: { request: z.undefined(), result: watchFrame },
 }
 
 /** Client signatures of the namespace; the declaration merges below are derived from it. */
@@ -212,6 +229,8 @@ export interface TallyRemoteApi {
   peakSavings: (request: { from: number; to: number }) => Promise<RemoteResult<PeakSavings>>
   exportCsv: (request: { from: number; to: number; tz: string }) => Promise<RemoteResult<string>>
   rebuild: () => Promise<RemoteResult<void>>
+  /** Stream: `hello` first (and again after an overflow), then recorded, balance and budget events and backfill `status` frames. */
+  watch: (signal?: AbortSignal) => RemoteStreamHandle<TallyWatchFrame, never>
 }
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -230,6 +249,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'tally/peakSavings': TallyRemoteApi['peakSavings']
     'tally/exportCsv': TallyRemoteApi['exportCsv']
     'tally/rebuild': TallyRemoteApi['rebuild']
+    'tally/watch': TallyRemoteApi['watch']
   }
   interface TypertRemoteNamespaceMap {
     tally: TallyRemoteApi
@@ -249,7 +269,12 @@ type Descriptor = TypertRemoteContribution['descriptors'][number]
  * name: `dsh-tally-api#Type` for a type of the API package, `dsh-tally#tally/method:request` or
  * `:result` for an inline one. `hasRequest` is false for a method without a `request` parameter.
  */
-function descriptorOf(method: keyof typeof schemas, hasRequest: boolean, symbols: { request?: string; result?: string } = {}): Descriptor {
+function descriptorOf(
+  method: keyof typeof schemas,
+  hasRequest: boolean,
+  symbols: { request?: string; result?: string } = {},
+  stream = false,
+): Descriptor {
   const { request, result } = schemas[method]
   const symbol = (kind: 'request' | 'result') => symbols[kind] ?? `${PACKAGE}#${NAMESPACE}/${method}:${kind}`
   return {
@@ -257,6 +282,7 @@ function descriptorOf(method: keyof typeof schemas, hasRequest: boolean, symbols
     service: SERVICE,
     namespace: NAMESPACE,
     method,
+    ...stream ? { mode: 'stream' as const } : {},
     invocation: { kind: 'direct' },
     parameters: hasRequest
       ? [{
@@ -266,6 +292,8 @@ function descriptorOf(method: keyof typeof schemas, hasRequest: boolean, symbols
           codec: { mode: 'strict', typeSymbol: symbol('request'), create: () => request },
         }]
       : [],
+    // The stream's `signal` is transport cancellation, never a wire argument.
+    ...stream ? { cancellation: { parameter: 'signal' as const } } : {},
     result: { mode: 'strict', typeSymbol: symbol('result'), create: () => result },
   }
 }
@@ -287,6 +315,7 @@ export const TALLY_REMOTE: TypertRemoteContribution = {
     descriptorOf('peakSavings', true, { result: 'dsh-tally-api#PeakSavings' }),
     descriptorOf('exportCsv', true),
     descriptorOf('rebuild', false),
+    descriptorOf('watch', false, { result: 'dsh-tally-api#TallyWatchFrame' }, true),
   ],
 }
 

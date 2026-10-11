@@ -44,6 +44,10 @@ interface UsageState {
   scheduled: Promise<void>
   rebuilding: Promise<void>
   progress: { done: number; total: number } | null
+  /** Backfill runs and rebuilds in flight; `progress` alone cannot tell, as it keeps its last value after a run. */
+  busy: number
+  /** Internal observers of `busy` and `progress` changes (see `watchProgress`). */
+  observers: Set<() => void>
   errors: TallyStatus['errors']
   /** `ctx.sessions` while it is available, for headers of live sessions not yet listed. */
   sessions: SessionStore | undefined
@@ -92,6 +96,8 @@ export class TallyUsage extends Service implements UsageService {
       scheduled: new Promise<void>(resolve => { started = resolve }),
       rebuilding: Promise.resolve(),
       progress: null,
+      busy: 0,
+      observers: new Set(),
       errors: [],
       sessions: undefined,
     }
@@ -213,6 +219,8 @@ export class TallyUsage extends Service implements UsageService {
   /** Drop the whole ledger and replay every session log; resolves when the replay finished. Emits no `tally/recorded`. */
   rebuild(): Promise<void> {
     const state = this.state
+    state.busy++
+    this.notifyProgress()
     const next = state.rebuilding.catch(() => {}).then(async () => {
       this.assertActive()
       const previous = state.run
@@ -223,6 +231,9 @@ export class TallyUsage extends Service implements UsageService {
       state.errors = []
       state.progress = null
       await this.startBackfill(true).done
+    }).finally(() => {
+      state.busy--
+      this.notifyProgress()
     })
     state.rebuilding = next
     return next
@@ -236,6 +247,22 @@ export class TallyUsage extends Service implements UsageService {
     }
   }
 
+  /** Whether a backfill pass or a rebuild is in flight right now. Internal: not part of `UsageService`. */
+  backfilling(): boolean {
+    return this.state.busy > 0
+  }
+
+  /**
+   * Calls `observer` whenever a backfill or rebuild starts, advances or ends; returns the
+   * unsubscribe function. Internal (used by the `watch` stream): not part of `UsageService`,
+   * and not a cordis event, so the public event surface stays unchanged.
+   */
+  watchProgress(observer: () => void): () => void {
+    const observers = this.state.observers
+    observers.add(observer)
+    return () => { observers.delete(observer) }
+  }
+
   /** Resolves once the scheduled backfill and any rebuild have finished (not part of `UsageService`). */
   async idle(): Promise<void> {
     const state = this.state
@@ -244,6 +271,16 @@ export class TallyUsage extends Service implements UsageService {
       const run = state.run
       await Promise.allSettled([run?.done, state.rebuilding])
       if (state.run === run) return
+    }
+  }
+
+  private notifyProgress(): void {
+    for (const observer of [...this.state.observers]) {
+      try {
+        observer()
+      } catch (error) {
+        this.ctx.logger.warn(`progress observer failed: ${messageOf(error)}`)
+      }
     }
   }
 
@@ -297,8 +334,17 @@ export class TallyUsage extends Service implements UsageService {
   private startBackfill(full: boolean): BackfillRun {
     const controller = new AbortController()
     const signal = AbortSignal.any([this.state.lifetime.signal, controller.signal])
-    const run: BackfillRun = { controller, done: this.backfill(signal, full) }
-    this.state.run = run
+    const state = this.state
+    state.busy++
+    this.notifyProgress()
+    const run: BackfillRun = {
+      controller,
+      done: this.backfill(signal, full).finally(() => {
+        state.busy--
+        this.notifyProgress()
+      }),
+    }
+    state.run = run
     return run
   }
 
@@ -317,6 +363,7 @@ export class TallyUsage extends Service implements UsageService {
       const todo = all ? records : records.filter(r => !this.recorder.isSettled(r.header.id))
       const progress = { done: 0, total: todo.length }
       state.progress = progress
+      this.notifyProgress()
       for (let i = 0; i < todo.length && !signal.aborted; i += this.batchSize) {
         const batch = todo.slice(i, i + this.batchSize)
         const reads = await Promise.allSettled(batch.map(r => query.readSession(r.header.id)))
@@ -340,6 +387,7 @@ export class TallyUsage extends Service implements UsageService {
             }
           }
           progress.done++
+          this.notifyProgress()
         }
         await nextTick()
       }
