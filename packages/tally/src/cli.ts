@@ -1,22 +1,26 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs'
+import { basename } from 'node:path'
 import { parseArgs } from 'node:util'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import type { Currency } from 'dsh-tally-api'
 import { pickBillParser, type BillColumn } from './reconcile/bill.js'
 import './reconcile/generic-csv.js'
+import { deepseekCost, loadDeepSeekExport, parseDeepSeekUsage, summarizeDeepSeek } from './reconcile/deepseek.js'
+import { isZip, readZip } from './reconcile/zip.js'
 import type { ProviderPriceOverride } from 'dsh-tally-api'
 import { compare } from './reconcile/compare.js'
 import { ledgerDaily } from './reconcile/ledger.js'
-import { formatReport } from './reconcile/report.js'
+import { formatDeepSeekSplit, formatReport } from './reconcile/report.js'
 
 const USAGE = `用法：dsh-tally reconcile --bill <账单文件> [选项]
 
 把账本中按天、按模型的费用和厂商账单逐行对比。
 
 选项：
-  --bill <文件>          账单导出文件（必填）
-  --format <格式>        账单格式；目前可用：csv
+  --bill <文件>          账单文件（必填）：CSV，或 DeepSeek 官方导出的 ZIP
+  --format <格式>        账单格式：csv（通用 CSV）、deepseek（DeepSeek 费用表或官方 ZIP）；
+                         不指定时按表头自动识别 DeepSeek 费用表
   --from <YYYY-MM-DD>    起始日期（含），默认取账单中最早的日期
   --to <YYYY-MM-DD>      结束日期（含），默认取账单中最晚的日期
   --tz <时区>            划分日期的时区，默认 Asia/Shanghai
@@ -96,16 +100,52 @@ function main(argv: string[]): number {
     if (!['day', 'model', 'amount', 'currency'].includes(k)) throw new UsageError(`未知的列：${k}`)
   }
 
-  let text: string
+  let bytes: Buffer
   try {
-    text = readFileSync(values.bill, 'utf8')
+    bytes = readFileSync(values.bill)
   } catch {
     throw new UsageError(`无法读取账单文件：${values.bill}`)
   }
-  const parser = pickBillParser(text, values.format)
-  const parsed = parser.parse(text, {
-    columns, currency: values.currency as Currency | undefined, modelMap: pairs(values['model-map'], '--model-map'),
-  })
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: values.tz })
+  } catch {
+    throw new UsageError(`未知的时区：${values.tz}`)
+  }
+  // An official DeepSeek ZIP: only its cost table carries amounts; the usage table adds request counts.
+  let text: string
+  let source = basename(values.bill)
+  let usageText: string | undefined
+  let notes: string[] = []
+  if (isZip(bytes)) {
+    if (values.format !== undefined && values.format !== 'deepseek') throw new UsageError('ZIP 文件只支持 --format deepseek')
+    let exported: ReturnType<typeof loadDeepSeekExport>
+    try {
+      exported = loadDeepSeekExport(readZip(bytes))
+    } catch (error) {
+      throw new UsageError(error instanceof Error ? error.message : String(error))
+    }
+    text = exported.costText
+    source = `${basename(values.bill)} 中的 ${exported.costName}`
+    usageText = exported.usageText
+    notes = exported.notes
+  } else {
+    text = bytes.toString('utf8')
+  }
+  let parser: ReturnType<typeof pickBillParser>
+  try {
+    parser = pickBillParser(text, values.format)
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error))
+  }
+  const options = {
+    columns, currency: values.currency as Currency | undefined, modelMap: pairs(values['model-map'], '--model-map'), tz: values.tz!,
+  }
+  let parsed: ReturnType<typeof parser.parse>
+  try {
+    parsed = parser.parse(text, options)
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error))
+  }
   const days = parsed.rows.map(r => r.day).sort()
   const from = values.from ?? days[0]
   const to = values.to ?? days.at(-1)
@@ -130,9 +170,13 @@ function main(argv: string[]): number {
     dbPath: values.db ?? dshHomePath('tally', 'tally.v1.sqlite'), from, to, tz: values.tz!, providerRoutes: routes, overrides,
   })
   const report = compare(ledger, bill, values.tolerance)
+  const deepseek = parser === deepseekCost
+    ? summarizeDeepSeek(bill, usageText === undefined ? undefined : parseDeepSeekUsage(usageText, { tz: values.tz! }).days.filter(d => d.day >= from && d.day <= to))
+    : undefined
   process.stdout.write(values.json
-    ? JSON.stringify({ ...report, skipped: parsed.skipped, routes, outOfRange }, null, 2) + '\n'
-    : formatReport(report, parsed.skipped, routes) + (outOfRange > 0 ? `（账单中另有 ${outOfRange} 行不在对账日期范围内，未参与对账。）\n` : ''))
+    ? JSON.stringify({ ...report, skipped: parsed.skipped, routes, outOfRange, ...(deepseek ? { deepseek: { source, ...deepseek, notes } } : {}) }, null, 2) + '\n'
+    : formatReport(report, parsed.skipped, routes, deepseek ? formatDeepSeekSplit(deepseek, source, notes) : '')
+      + (outOfRange > 0 ? `（账单中另有 ${outOfRange} 行不在对账日期范围内，未参与对账。）\n` : ''))
   return report.rows.every(r => r.withinTolerance) && parsed.skipped.length === 0 ? 0 : 1
 }
 

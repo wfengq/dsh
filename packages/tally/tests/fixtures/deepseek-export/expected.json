@@ -1,0 +1,32 @@
+{
+  "synthetic": true,
+  "note": "所有日期、账号、密钥占位符、单价、数量和金额均为测试数据，不代表官方价格或真实调用。",
+  "currency": "CNY",
+  "timezone": "Asia/Shanghai",
+  "cost_rows": 3,
+  "amount_rows": 12,
+  "daily": [
+    {
+      "day": "2000-01-01",
+      "model": "deepseek-flash",
+      "paid": "0.5",
+      "granted": "0.34",
+      "total": "0.84",
+      "request_count": 14
+    },
+    {
+      "day": "2000-01-02",
+      "model": "deepseek-flash",
+      "paid": "0.037",
+      "granted": "0",
+      "total": "0.037",
+      "request_count": 2
+    }
+  ],
+  "totals": {
+    "paid": "0.537",
+    "granted": "0.34",
+    "total": "0.877",
+    "request_count": 16
+  }
+}
