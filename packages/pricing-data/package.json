@@ -1,6 +1,6 @@
 {
   "name": "dsh-pricing-data",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.0",
   "description": "DeepSeek 等模型厂商的价格数据和计价函数：峰谷时段、节假日、价格版本，金额用定点运算",
   "keywords": [
     "dsh",
@@ -39,6 +39,7 @@
     "typecheck": "tsc -p . --noEmit"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "beta"
   }
 }

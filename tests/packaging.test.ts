@@ -56,7 +56,15 @@ describe.each(Object.entries(PACKAGES))('package %s', (dir, entries) => {
     expect(manifest.repository).toEqual({ type: 'git', url: 'git+https://github.com/wfengq/dsh.git', directory: `packages/${dir}` })
     expect(manifest.homepage).toBe(`https://github.com/wfengq/dsh/tree/main/packages/${dir}#readme`)
     expect(manifest.bugs).toBe('https://github.com/wfengq/dsh/issues')
-    expect(manifest.publishConfig).toEqual({ access: 'public' })
-    expect(manifest.version).toBe('0.1.0')
+    // A preview until dsh 0.2 is final: `npm publish` puts it under the beta tag, never latest.
+    expect(manifest.publishConfig).toEqual({ access: 'public', tag: 'beta' })
+    expect(manifest.version).toBe('0.1.0-beta.0')
+  })
+})
+
+describe('dsh-tally-ui', () => {
+  it('accepts the dsh-tally preview as its peer (a plain >=0.1.0 range excludes prereleases)', () => {
+    const manifest = JSON.parse(readFileSync(`${root}packages/tally-ui/package.json`, 'utf8'))
+    expect(manifest.peerDependencies['dsh-tally']).toBe('>=0.1.0-0 <0.2.0')
   })
 })

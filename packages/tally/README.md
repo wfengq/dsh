@@ -10,7 +10,7 @@ DeepSeek Harness（dsh）的记账插件：从会话日志里读出每一次计�
 ## 安装
 
 ```sh
-dsh plugin --profile web add dsh-tally
+dsh plugin --profile web add dsh-tally@beta
 ```
 
 插件需要 Node.js `>=22.19.0`（使用内置的 `node:sqlite`）。

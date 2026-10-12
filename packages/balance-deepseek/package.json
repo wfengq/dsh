@@ -1,6 +1,6 @@
 {
   "name": "dsh-tally-balance-deepseek",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.0",
   "description": "为 dsh-tally 提供 DeepSeek 余额查询（API key 与官方账号两种方式）",
   "keywords": [
     "dsh",
@@ -57,6 +57,7 @@
     "@deepseek-ai/schemastery": "3.18.4"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "beta"
   }
 }
