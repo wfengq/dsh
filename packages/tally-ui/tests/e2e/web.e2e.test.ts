@@ -29,8 +29,11 @@ const READY_TIMEOUT = 90_000
 /** Longest wait for something a finished turn causes (recording, watch frame, render). */
 const TURN_TIMEOUT = 30_000
 
-/** The `dsh` bin of the installed CLI, run with this Node so no package-manager wrapper sits in between. */
-const dshBin = (() => {
+/**
+ * The `dsh` bin of the installed CLI, run with this Node so no package-manager wrapper sits in between.
+ * `DSH_E2E_BIN` points it at a separately installed dsh instead, to check the linked install path.
+ */
+const dshBin = process.env.DSH_E2E_BIN ?? (() => {
   const manifest = createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json')
   const { bin } = JSON.parse(readFileSync(manifest, 'utf8')) as { bin: { dsh: string } }
   return join(dirname(manifest), bin.dsh)
