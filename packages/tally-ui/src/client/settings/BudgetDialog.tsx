@@ -1,5 +1,5 @@
 import { Button, Input, Menu, Modal, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { Budget, Currency } from 'dsh-tally-api'
 import type { T } from '../labels.ts'
@@ -16,24 +16,18 @@ export function BudgetDialog({ open, editing, existing, workspaces, save, onClos
   onClose: () => void
   t: T
 }): ReactNode {
-  const [period, setPeriod] = useState<Budget['period']>('day')
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null)
-  const [amount, setAmount] = useState('')
-  const [currency, setCurrency] = useState<Currency>('CNY')
+  // The parent mounts a fresh dialog (a new `key`) for every opening, so the draft starts from the
+  // edited budget, or from an empty daily CNY budget, without a frame of the previous draft.
+  const [period, setPeriod] = useState<Budget['period']>(editing?.period ?? 'day')
+  const [workspaceId, setWorkspaceId] = useState<string | null>(editing?.scope.workspaceId ?? null)
+  const [amount, setAmount] = useState(editing?.limit.amount ?? '')
+  const [currency, setCurrency] = useState<Currency>(editing?.limit.currency ?? 'CNY')
   const [scopeOpen, setScopeOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  // Every opening starts from the edited budget, or from an empty daily CNY draft.
-  useEffect(() => {
-    if (!open) return
-    setPeriod(editing?.period ?? 'day')
-    setWorkspaceId(editing?.scope.workspaceId ?? null)
-    setAmount(editing?.limit.amount ?? '')
-    setCurrency(editing?.limit.currency ?? 'CNY')
-    setError(null)
-    setBusy(false)
-  }, [open, editing])
+  /** False once this opening is gone: a save that finishes later must not close the next one. */
+  const live = useRef(true)
+  useEffect(() => () => { live.current = false }, [])
 
   const problem = validateBudgetDraft({ period, workspaceId, amount }, existing, editing?.id ?? null)
   const title = t(editing === null ? 'settings.budget.add' : 'settings.budget.edit')
@@ -50,12 +44,13 @@ export function BudgetDialog({ open, editing, existing, workspaces, save, onClos
         scope: workspaceId === null ? {} : { workspaceId },
         limit: { amount: amount.trim(), currency },
       })
+      if (!live.current) return
       if (result.ok) onClose()
       else setError(result.error.message)
     } catch {
-      setError(t('settings.saveFailed'))
+      if (live.current) setError(t('settings.saveFailed'))
     } finally {
-      setBusy(false)
+      if (live.current) setBusy(false)
     }
   }
 

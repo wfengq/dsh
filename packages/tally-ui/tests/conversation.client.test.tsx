@@ -40,12 +40,14 @@ function dockProps(opts: {
   budgets?: Budget[] | null
   spend?: Record<string, { amount: string; currency: 'CNY' | 'USD' }>
   status?: TallyStatusView
+  canOpen?: boolean
 } = {}) {
   return {
     useMonth: hookOf(observable<UsageGroup | null>(opts.month === undefined ? group([cny('20')]) : opts.month)),
     useBudgets: hookOf(observable<readonly Budget[] | null>(opts.budgets ?? [])),
     useBudgetSpend: hookOf(observable<Readonly<Record<string, { amount: string; currency: 'CNY' | 'USD' }>>>(opts.spend ?? {})),
     openDashboard: vi.fn(),
+    canOpenDashboard: () => opts.canOpen ?? true,
     useElements: hookOf(observable<Elements>({ ...ALL_ELEMENTS, ...opts.elements })),
     useSession: hookOf(observable<SessionView | null>(opts.session === undefined ? sessionView(group([cny('1.5')])) : opts.session)),
     useToday: hookOf(observable<UsageGroup | null>(opts.today === undefined ? group([cny('3')]) : opts.today)),
@@ -145,6 +147,16 @@ describe('CostDock', () => {
     fireEvent.pointerDown(bar)
     fireEvent.focus(bar)
     expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
+  })
+
+  it('offers no way to the dashboard while it cannot open', async () => {
+    const props = dockProps({ canOpen: false })
+    render(<CostDock {...props} />)
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['dock.today']) }))
+    expect(props.openDashboard).not.toHaveBeenCalled()
+    fireEvent.mouseEnter(screen.getByTestId('hover-anchor'))
+    expect(screen.queryByText(zh['dock.openDashboard'])).toBeNull()
   })
 
   it('opens the dashboard when the bar is clicked', async () => {
@@ -319,6 +331,7 @@ describe('SessionTotal', () => {
       useSession={hookOf(observable<SessionView | null>(view))}
       loadModels={vi.fn(async () => models)}
       openDashboard={openDashboard}
+      canOpenDashboard={() => true}
       t={t}
     />
   )
@@ -363,13 +376,14 @@ describe('BudgetToast', () => {
   const ID = '6f1c2a9e-0d4b-4a51-9f3e-2b7c8d9e0f12'
   const alert80: BudgetAlert = { budgetId: ID, threshold: 0.8, spent: cny('8.2'), limit: cny('10'), periodStart: 0 }
   const daily: Budget = { id: ID, period: 'day', scope: {}, limit: cny('10') }
-  const toast = (alerts: readonly BudgetAlert[], budgets: readonly Budget[] | null = [daily], dismissAlert = vi.fn(), openDashboard = vi.fn()) => (
+  const toast = (alerts: readonly BudgetAlert[], budgets: readonly Budget[] | null = [daily], dismissAlert = vi.fn(), openDashboard = vi.fn(), canOpen = true) => (
     <BudgetToast
       useElements={hookOf(observable<Elements>(ALL_ELEMENTS))}
       useAlerts={hookOf(observable<readonly BudgetAlert[]>(alerts))}
       useBudgets={hookOf(observable<readonly Budget[] | null>(budgets))}
       dismissAlert={dismissAlert}
       openDashboard={openDashboard}
+      canOpenDashboard={() => canOpen}
       t={t}
     />
   )
@@ -386,6 +400,26 @@ describe('BudgetToast', () => {
     expect(dismissAlert).toHaveBeenCalledWith(alert80)
   })
 
+  it('has no 查看 action while the dashboard cannot open', () => {
+    render(toast([alert80], [daily], vi.fn(), vi.fn(), false))
+    expect(screen.queryByRole('button', { name: zh['alert.view'] })).toBeNull()
+  })
+
+  it('reads naturally in English for a budget it does not know', async () => {
+    const { en } = await import('../src/client/locales.ts')
+    const tEn = (key: keyof typeof en, params?: Record<string, unknown>) => en[key].replace(/\{(\w+)\}/g, (_, name: string) => String(params?.[name] ?? ''))
+    render(<BudgetToast
+      useElements={hookOf(observable<Elements>(ALL_ELEMENTS))}
+      useAlerts={hookOf(observable<readonly BudgetAlert[]>([alert80]))}
+      useBudgets={hookOf(observable<readonly Budget[] | null>(null))}
+      dismissAlert={vi.fn()}
+      openDashboard={vi.fn()}
+      canOpenDashboard={() => true}
+      t={tEn as never}
+    />)
+    expect(screen.getByTestId('toast-text').textContent).toMatch(/^The budget 82% used/)
+  })
+
   it('says a monthly workspace budget is over at 100%', () => {
     const monthly: Budget = { id: ID, period: 'month', scope: { workspaceId: 'ws-a' }, limit: cny('100') }
     render(toast([{ ...alert80, threshold: 1, spent: cny('102'), limit: cny('100') }], [monthly]))
@@ -394,6 +428,6 @@ describe('BudgetToast', () => {
 
   it('falls back to a period-less name for a budget it does not know', () => {
     render(toast([alert80], null))
-    expect(screen.getByTestId('toast-text').textContent).toBe(t('alert.used', { period: '', pct: 82, spent: '¥8.2', limit: '¥10' }))
+    expect(screen.getByTestId('toast-text').textContent).toBe(t('alert.used', { period: zh['alert.period.any'], pct: 82, spent: '¥8.2', limit: '¥10' }))
   })
 })

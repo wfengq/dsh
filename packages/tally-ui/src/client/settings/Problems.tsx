@@ -23,7 +23,7 @@ function SessionsLine({ row, t }: { row: Extract<ProblemRow, { kind: 'sessions' 
         className="dsh-tally-disclosure"
       >
         <ul className="dsh-tally-problem-list">
-          {row.items.map(item => <li key={item.sessionId}>{`${item.sessionId}：${item.message}`}</li>)}
+          {row.items.map((item, i) => <li key={`${item.sessionId}:${i}`}>{`${item.sessionId}：${item.message}`}</li>)}
         </ul>
       </DisclosureRow>
     </div>

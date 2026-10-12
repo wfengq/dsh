@@ -358,4 +358,14 @@ describe('TallyStore', () => {
     store.upsertEntry(entry({ id: 's1:3', route: 'z-route' }))
     expect(store.distinctRoutes()).toEqual(['a-route', 'z-route'])
   })
+
+  it('keeps the route list right across a reset and a rolled-back write', () => {
+    store = TallyStore.open(join(dir, 'routes-cache.sqlite'))
+    store.upsertEntry(entry({ id: 's1:1', route: 'a' }))
+    expect(store.distinctRoutes()).toEqual(['a'])
+    expect(() => store!.transaction(() => { store!.upsertEntry(entry({ id: 's1:2', route: 'b' })); throw new Error('boom') })).toThrow('boom')
+    expect(store.distinctRoutes()).toEqual(['a'])
+    store.reset()
+    expect(store.distinctRoutes()).toEqual([])
+  })
 })

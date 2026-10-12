@@ -242,12 +242,16 @@ export class TallyStore {
   }
 
   /** Inserts the entry unless its id exists; returns whether a row was added. */
+  /** Routes seen so far, kept in step with writes so a status frame does not scan the ledger. */
+  #routes: Set<string> | undefined
+
   upsertEntry(e: StoredEntry): boolean {
     const result = this.#insert.run(
       e.id, e.sessionId, e.rootSessionId, e.workspaceId, e.at, e.route, e.model,
       e.tokens.input, e.tokens.cacheRead, e.tokens.cacheWrite, e.tokens.output,
       e.tokens.reasoning ?? null, e.usageKnown ? 1 : 0, e.deleted ? 1 : 0,
     )
+    this.#routes?.add(e.route)
     return Number(result.changes) > 0
   }
 
@@ -299,8 +303,11 @@ export class TallyStore {
 
   /** Every route that appears in the ledger, deleted sessions included, sorted. */
   distinctRoutes(): string[] {
-    const rows = this.#db.prepare('SELECT DISTINCT route FROM entries ORDER BY route').all() as Array<{ route: string }>
-    return rows.map(r => r.route)
+    if (this.#routes === undefined) {
+      const rows = this.#db.prepare('SELECT DISTINCT route FROM entries').all() as Array<{ route: string }>
+      this.#routes = new Set(rows.map(r => r.route))
+    }
+    return [...this.#routes].sort()
   }
 
   /**
@@ -352,6 +359,7 @@ export class TallyStore {
 
   /** Drops every entry, cursor and meta value so the next scan rebuilds from the session logs. */
   reset(): void {
+    this.#routes = undefined
     this.transaction(() => this.#db.exec('DELETE FROM entries; DELETE FROM cursors; DELETE FROM meta'))
   }
 
@@ -368,6 +376,8 @@ export class TallyStore {
       this.#db.exec('COMMIT')
       return result
     } catch (error) {
+      // Routes added inside the rolled-back writes must not outlive them.
+      this.#routes = undefined
       try {
         this.#db.exec('ROLLBACK')
       } catch {

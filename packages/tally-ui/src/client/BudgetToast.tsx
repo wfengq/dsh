@@ -21,22 +21,24 @@ export interface BudgetToastInjected {
   }
   dismissAlert: (alert: BudgetAlert) => void
   openDashboard: (sessionId?: string) => void
+  canOpenDashboard: () => boolean
 }
 
 export type BudgetToastProps = InjectFace<BudgetToastInjected> & { t: T }
 
 const alertKey = (a: BudgetAlert) => `${a.budgetId}\u0000${a.threshold}\u0000${a.periodStart}`
 
-/** "今日" / "本月（ws-a）"; empty for a budget this window does not know. */
+/** "今日" / "本月（ws-a）"; a neutral word ("" in Chinese, "The" in English) for a budget this window does not know. */
 function periodName(budget: Budget | undefined, t: T): string {
-  if (budget === undefined) return ''
+  if (budget === undefined) return t('alert.period.any')
   const period = t(budget.period === 'day' ? 'alert.period.day' : 'alert.period.month')
   return budget.scope.workspaceId === undefined ? period : `${period}（${budget.scope.workspaceId}）`
 }
 
 /** Shows the oldest pending budget alert; once the toast is done it is dismissed and the next one shows. */
-export function BudgetToast({ useElements, useAlerts, useBudgets, dismissAlert, openDashboard, t }: BudgetToastProps): ReactNode {
+export function BudgetToast({ useElements, useAlerts, useBudgets, dismissAlert, openDashboard, canOpenDashboard, t }: BudgetToastProps): ReactNode {
   const enabled = useElements((e: Elements) => e.budgetToast)
+  const canOpen = useElements((e: Elements) => e.sidebarTab) && canOpenDashboard()
   const alert = useAlerts((list: readonly BudgetAlert[]): BudgetAlert | undefined => list[0])
   const budget = useBudgets((list: readonly Budget[] | null): Budget | undefined => list?.find(b => b.id === alert?.budgetId))
   if (!enabled || alert === undefined) return null
@@ -49,7 +51,7 @@ export function BudgetToast({ useElements, useAlerts, useBudgets, dismissAlert, 
       key={alertKey(alert)}
       text={text}
       holdMs={HOLD_MS}
-      actions={[{ label: t('alert.view'), onClick: () => { openDashboard() } }]}
+      actions={canOpen ? [{ label: t('alert.view'), onClick: () => { openDashboard() } }] : []}
       onDone={() => { dismissAlert(alert) }}
     />
   )

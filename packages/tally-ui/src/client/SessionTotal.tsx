@@ -17,6 +17,7 @@ export interface SessionTotalInjected {
   /** The session (subagents included) grouped by model; `null` when the call failed. */
   loadModels: (sessionId: string) => Promise<UsageGroup[] | null>
   openDashboard: (sessionId?: string) => void
+  canOpenDashboard: () => boolean
 }
 
 export type SessionTotalProps = InjectFace<SessionTotalInjected> & { t: T }
@@ -48,8 +49,9 @@ function ModelSplit({ sessionId, loadModels, t }: { sessionId: string; loadModel
  * Session header total, subagents included. Hovering splits it by model and lists the subagent sessions;
  * clicking opens the usage dashboard on this session. Shows `—` until the session has entries, never a zero.
  */
-export function SessionTotal({ useElements, useSession, sessionId, loadModels, openDashboard, t }: SessionTotalProps): ReactNode {
+export function SessionTotal({ useElements, useSession, sessionId, loadModels, openDashboard, canOpenDashboard, t }: SessionTotalProps): ReactNode {
   const enabled = useElements((e: Elements) => e.headerUtilities)
+  const canOpen = useElements((e: Elements) => e.sidebarTab) && canOpenDashboard()
   const session = useSession((s: SessionView | null) => s)
   if (!enabled) return null
   const hasEntries = session !== null && session.usage.total.requestCount > 0
@@ -61,7 +63,8 @@ export function SessionTotal({ useElements, useSession, sessionId, loadModels, o
       className="dsh-tally-total-button"
       data-tally="total"
       aria-label={`${t('header.total')} ${total}`}
-      onClick={() => { openDashboard(sessionId) }}
+      data-can-open={canOpen}
+      onClick={() => { if (canOpen) openDashboard(sessionId) }}
     >
       <span className="dsh-tally-label">{t('dock.session')}</span>
       <span className="dsh-tally-num">{total}</span>

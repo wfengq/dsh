@@ -108,3 +108,8 @@
 
 .dsh-tally-details { display: inline-flex; max-width: 100%; }
 .dsh-tally-details-panel { z-index: 50; padding: 8px 12px; }
+
+/* When the line still overflows (a narrow composer in a wide window), the band text ends in an ellipsis. */
+.dsh-tally-dock-item[data-tally-item="band"] { min-width: 0; flex-shrink: 1; }
+.dsh-tally-dock-item[data-tally-item="band"] .dsh-tally-num { overflow: hidden; text-overflow: ellipsis; }
+.dsh-tally-dock-bar[data-can-open="false"] { cursor: default; }

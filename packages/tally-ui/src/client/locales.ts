@@ -33,6 +33,7 @@ export const zh = {
   'alert.over': '{period}预算已超出（{spent} / {limit}）',
   'alert.period.day': '今日',
   'alert.period.month': '本月',
+  'alert.period.any': '该',
   'alert.view': '查看',
 
   'turn.cost': '本轮费用',
@@ -209,6 +210,7 @@ export const en: Record<keyof typeof zh, string> = {
   'alert.over': '{period} budget exceeded ({spent} / {limit})',
   'alert.period.day': "Today's",
   'alert.period.month': "This month's",
+  'alert.period.any': 'The',
   'alert.view': 'View',
 
   'turn.cost': 'Turn cost',

@@ -28,6 +28,8 @@ export interface CostDockInjected {
   /** The `tally/band` call; `null` when no price is known or the call failed. */
   band: (request: { route: string; model: string; at: number }) => Promise<BandView | null>
   openDashboard: (sessionId?: string) => void
+  /** Whether the usage tab can open now (a right sidebar exists and the tab is switched on). */
+  canOpenDashboard: () => boolean
 }
 
 export type CostDockProps = InjectFace<CostDockInjected> & { t: T }
@@ -93,8 +95,10 @@ function Line({ label, value, tally }: { label: string; value: ReactNode; tally?
  * the usage dashboard.
  */
 export function CostDock(props: CostDockProps): ReactNode {
-  const { useElements, useSession, useToday, useMonth, useBudgets, useBudgetSpend, useBalances, useStatus, refreshBalance, band, openDashboard, t } = props
+  const { useElements, useSession, useToday, useMonth, useBudgets, useBudgetSpend, useBalances, useStatus, refreshBalance, band, openDashboard, canOpenDashboard, t } = props
   const enabled = useElements((e: Elements) => e.composerDock)
+  // Read through the hook so switching the usage tab re-renders the dock.
+  const canOpen = useElements((e: Elements) => e.sidebarTab) && canOpenDashboard()
   const session = useSession((s: SessionView | null) => s)
   const today = useToday((s: UsageGroup | null) => s)
   const month = useMonth((s: UsageGroup | null) => s)
@@ -116,7 +120,7 @@ export function CostDock(props: CostDockProps): ReactNode {
       : t('dock.budget', { pct: Math.floor(picked.ratio * 100) })
 
   const bar = (
-    <button type="button" className="dsh-tally-dock-bar" onClick={() => { openDashboard() }}>
+    <button type="button" className="dsh-tally-dock-bar" data-can-open={canOpen} onClick={() => { if (canOpen) openDashboard() }}>
       <span className="dsh-tally-dock-item" data-tally-item="today">
         <span className="dsh-tally-label">{t('dock.today')}</span>
         <span className="dsh-tally-num">{today === null ? '—' : costLabel(today, t)}</span>
@@ -168,7 +172,7 @@ export function CostDock(props: CostDockProps): ReactNode {
           )
         : null}
       {bandView === null ? null : <Line label={t('dock.band')} value={bandText(bandView, now, t)} />}
-      <button type="button" className="dsh-tally-link" onClick={() => { openDashboard() }}>{t('dock.openDashboard')}</button>
+      {canOpen ? <button type="button" className="dsh-tally-link" onClick={() => { openDashboard() }}>{t('dock.openDashboard')}</button> : null}
     </div>
   )
 

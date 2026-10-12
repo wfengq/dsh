@@ -211,3 +211,5 @@
   .dsh-tally-skeleton { animation: dsh-tally-pulse 1.4s ease-in-out infinite; }
 }
 @keyframes dsh-tally-pulse { 50% { opacity: 0.55; } }
+
+.dsh-tally-ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

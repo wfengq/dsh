@@ -211,8 +211,14 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
       return result.ok ? [budget.id, spentIn(sumGroups(result.value), budget.limit.currency)] as const : null
     }))
     if (seq !== spendSeq) return
+    // A refused query keeps that budget's previous spend rather than reading as nothing spent.
+    const previous = budgetSpend.getSnapshot()
     const next: Record<string, Money> = {}
-    for (const answer of answers) if (answer !== null) next[answer[0]] = answer[1]
+    list.forEach((budget, i) => {
+      const answer = answers[i]
+      if (answer != null) next[answer[0]] = answer[1]
+      else if (previous[budget.id] !== undefined) next[budget.id] = previous[budget.id]!
+    })
     budgetSpend.set(next)
   }
 

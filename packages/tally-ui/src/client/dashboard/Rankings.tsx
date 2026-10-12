@@ -47,11 +47,11 @@ export function Rankings({ models, workspaces, sessions, focusSession, t }: {
   const rows = kind === 'session' ? sessions : kind === 'model' ? models : workspaces
   const shown = all ? rows : rows.slice(0, TOP)
   const name = (g: UsageGroup): ReactNode => {
-    if (kind === 'workspace') return g.key === '' ? t('tab.unknownWorkspace') : g.key
+    const text = <span className="dsh-tally-ellipsis">{kind === 'workspace' && g.key === '' ? t('tab.unknownWorkspace') : g.key}</span>
     if (kind === 'session' && g.deletedCount !== undefined && g.deletedCount > 0) {
-      return <>{g.key}<Tag>{t('tab.deleted', { count: g.deletedCount })}</Tag></>
+      return <>{text}<Tag>{t('tab.deleted', { count: g.deletedCount })}</Tag></>
     }
-    return g.key
+    return text
   }
   return (
     <section className="dsh-tally-card-group" data-tally="rankings">

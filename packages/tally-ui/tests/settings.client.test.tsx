@@ -287,6 +287,20 @@ describe('budgets card', () => {
     expect(within(dialog).getByRole('tab', { name: label('settings.budget.month') }).getAttribute('aria-selected')).toBe('true')
   })
 
+  it('does not let a late save close a dialog opened again meanwhile', async () => {
+    let finish!: (value: unknown) => void
+    mount({ setBudget: () => new Promise(resolve => { finish = resolve }) })
+    let dialog = await openAdd()
+    fireEvent.change(within(dialog).getByLabelText(label('settings.budget.amount')), { target: { value: '5' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: label('settings.save') }))
+    fireEvent.click(within(dialog).getByRole('button', { name: label('settings.cancel') }))
+    await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull() })
+    dialog = await openAdd()
+    expect((within(dialog).getByLabelText(label('settings.budget.amount')) as HTMLInputElement).value).toBe('')
+    await act(async () => { finish(ok(undefined)) })
+    expect(screen.getByRole('dialog', { name: label('settings.budget.add') })).toBeTruthy()
+  })
+
   it('keeps save disabled and explains an invalid amount', async () => {
     mount()
     const dialog = await openAdd()
@@ -461,6 +475,17 @@ describe('problems', () => {
     fireEvent.click(line)
     expect(screen.getByText(/s-3/).textContent).toContain('bad 3')
     expect(document.querySelectorAll('[data-tally="problem"]')).toHaveLength(1)
+  })
+
+  it('lists two errors of the same session without duplicate keys', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      mount({ status: withProblems({}, [{ sessionId: 's-1', message: 'a' }, { sessionId: 's-1', message: 'b' }]) })
+      fireEvent.click(screen.getByRole('button', { name: t('settings.problem.sessions', { count: 2 }) }))
+      expect(spy.mock.calls.some(call => String(call[0]).includes('same key'))).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('keeps ledger, pricing and budget problems on their own lines, with a rebuild hint for ledger errors', async () => {

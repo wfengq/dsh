@@ -188,6 +188,8 @@ describe('Dashboard', () => {
     await settle()
     expect(document.querySelector('[data-tally="ranking-session"] [data-tag]')?.textContent).toBe(t('tab.deleted', { count: 3 }))
     rankTab(zh['tab.byModel'])
+    // The name sits in its own element so a long one ends in an ellipsis.
+    expect(document.querySelector('[data-tally="ranking-model"] .dsh-tally-row-name .dsh-tally-ellipsis')).not.toBeNull()
     const names = [...document.querySelectorAll('[data-tally="ranking-model"] .dsh-tally-row-name')].map(n => n.textContent)
     expect(names).toEqual(['dear', 'cheap'])
     rankTab(zh['tab.byWorkspace'])

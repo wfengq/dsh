@@ -1,5 +1,5 @@
 import { Button, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { Budget, Money, UsageGroup, UsageQuery } from 'dsh-tally-api'
 import { budgetRatio, budgetTone } from '../budget-progress.ts'
@@ -78,7 +78,9 @@ export function BudgetsCard({ remote, generation = 0, budgetSpend, onChanged, t 
 }): ReactNode {
   const spend = useSnapshot(budgetSpend)
   const [budgets, setBudgets] = useState<Budget[] | null | undefined>(undefined)
-  const [dialog, setDialog] = useState<{ editing: Budget | null } | null>(null)
+  const [dialog, setDialog] = useState<{ editing: Budget | null; seq: number } | null>(null)
+  const openings = useRef(0)
+  const openDialog = (editing: Budget | null) => { openings.current += 1; setDialog({ editing, seq: openings.current }) }
   const [workspaces, setWorkspaces] = useState<string[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -143,16 +145,17 @@ export function BudgetsCard({ remote, generation = 0, budgetSpend, onChanged, t 
           budget={budget}
           spent={spend[budget.id] ?? { amount: '0', currency: budget.limit.currency }}
           busy={busy}
-          onEdit={() => { setDialog({ editing: budget }) }}
+          onEdit={() => { openDialog(budget) }}
           onRemove={() => { void remove(budget.id) }}
           t={t}
         />
       ))}
       <div className="dsh-tally-card-footer">
-        <Button variant="outline" size="sm" onClick={() => { setDialog({ editing: null }) }}>{t('settings.budget.add')}</Button>
+        <Button variant="outline" size="sm" onClick={() => { openDialog(null) }}>{t('settings.budget.add')}</Button>
         {error === null ? null : <span className="dsh-tally-error" role="alert">{error}</span>}
       </div>
       <BudgetDialog
+        key={dialog?.seq ?? 'closed'}
         open={dialog !== null}
         editing={dialog?.editing ?? null}
         existing={list}

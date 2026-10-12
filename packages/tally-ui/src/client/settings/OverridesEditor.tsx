@@ -1,5 +1,5 @@
 import { Button, Input, Menu, Modal, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { CatalogView, Currency, ProviderPriceOverride, TallyStatusView } from 'dsh-tally-api'
 import type { T } from '../labels.ts'
 import type { Snapshot } from '../store.ts'
@@ -93,16 +93,9 @@ function OverrideDialog({ open, onClose, routes, catalog, save, t }: {
   const [rows, setRows] = useState<ModelRow[]>([emptyRow()])
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    if (!open) return
-    setKind('alias')
-    setRoute('')
-    setAlias({ provider: '', model: '' })
-    setCurrency('CNY')
-    setRows([emptyRow()])
-    setFailed(false)
-  }, [open])
+  // Mounted afresh (new `key`) for every opening; a write that finishes later must not close the next one.
+  const live = useRef(true)
+  useEffect(() => () => { live.current = false }, [])
 
   const candidate = build(kind, route, alias, currency, rows)
   const providers = catalog?.providers ?? []
@@ -128,6 +121,7 @@ function OverrideDialog({ open, onClose, routes, catalog, save, t }: {
     setBusy(true)
     setFailed(false)
     const accepted = await save(candidate)
+    if (!live.current) return
     setBusy(false)
     if (accepted) onClose()
     else setFailed(true)
@@ -247,6 +241,7 @@ export function OverridesEditor({ form, status, loadCatalog, t }: {
   const locked = reason !== null
   const current = view.value?.overrides ?? []
   const [dialog, setDialog] = useState(false)
+  const [openings, setOpenings] = useState(0)
   const [catalog, setCatalog] = useState<CatalogView | null>(null)
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -278,10 +273,11 @@ export function OverridesEditor({ form, status, loadCatalog, t }: {
         <OverrideRow key={override.provider} override={override} disabled={locked || busy} onRemove={() => { void write(current.filter(o => o !== override)) }} t={t} />
       ))}
       <div className="dsh-tally-card-footer">
-        <Button variant="outline" size="sm" disabled={locked} onClick={() => { setDialog(true) }}>{t('settings.override.add')}</Button>
+        <Button variant="outline" size="sm" disabled={locked} onClick={() => { setOpenings(n => n + 1); setDialog(true) }}>{t('settings.override.add')}</Button>
         {failed && !dialog ? <span className="dsh-tally-error" role="alert">{t('settings.saveFailed')}</span> : null}
       </div>
       <OverrideDialog
+        key={dialog ? openings : 'closed'}
         open={dialog}
         onClose={() => { setDialog(false) }}
         routes={routes}

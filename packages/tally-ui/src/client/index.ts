@@ -104,6 +104,7 @@ export async function apply(ctx: Context): Promise<void> {
       () => scope.get('sidebarRight') as SidebarRightFace | undefined,
       () => elements.getSnapshot().sidebarTab,
     )
+    const canOpenDashboard = () => scope.get('sidebarRight') !== undefined && elements.getSnapshot().sidebarTab
     const loadModels: SessionTotalInjected['loadModels'] = sessionId =>
       valueOf(remote.query({ from: 0, to: Date.now() + 1, groupBy: 'model', filter: { rootSessionId: sessionId } }))
 
@@ -126,6 +127,7 @@ export async function apply(ctx: Context): Promise<void> {
         refreshBalance,
         band,
         openDashboard,
+        canOpenDashboard,
       }),
     }, CostDock))
 
@@ -142,14 +144,14 @@ export async function apply(ctx: Context): Promise<void> {
       id: 'tally.total',
       order: -10,
       locale: NS,
-      inject: (sessionId: string): SessionTotalInjected => ({ hooks: { elements, session: store.session(sessionId) }, sessionId, loadModels, openDashboard }),
+      inject: (sessionId: string): SessionTotalInjected => ({ hooks: { elements, session: store.session(sessionId) }, sessionId, loadModels, openDashboard, canOpenDashboard }),
     }, SessionTotal))
 
     scope.slots.inject(OVERLAY, () => scope.slots.register({
       name: OVERLAY,
       id: 'tally.budget',
       locale: NS,
-      inject: (): BudgetToastInjected => ({ hooks: { elements, alerts: store.alerts, budgets: store.budgets }, dismissAlert, openDashboard }),
+      inject: (): BudgetToastInjected => ({ hooks: { elements, alerts: store.alerts, budgets: store.budgets }, dismissAlert, openDashboard, canOpenDashboard }),
     }, BudgetToast))
 
     scope.slots.inject(SETTINGS_SECTION, () => {

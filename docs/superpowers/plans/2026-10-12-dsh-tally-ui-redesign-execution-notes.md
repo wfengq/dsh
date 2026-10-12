@@ -38,13 +38,13 @@
 - Final: Ruling: re-graded the reviewer's Minor "clicking 周期 caption switches an edited monthly budget to daily" to Important (silently changes user data) and fixed it — "leaves the period alone when its caption is clicked" RED→GREEN — cost if wrong: none.
 - Final: Ruling: keyboard focus is told apart from click focus by a pointerdown flag rather than :focus-visible (jsdom and some hosts lack it) — cost if wrong: a programmatic focus would also open the panel.
 
-## 暂缓的次要问题
+## 暂缓的次要问题（2026-10-12 已全部处理）
 
-- clicking the dock / session total / toast "查看" does nothing while the usage tab is switched off
-- budget and override dialogs reset in an effect (one-frame flash; a late save can close a reopened dialog) — use a key instead
-- a refused per-budget spend query shows "已用 ¥0" instead of keeping the previous value or "—"
-- with the right sidebar open the composer narrows but the window does not, so media-query collapse can clip the band text
-- duplicate React keys in the session problem list when one session errors twice
-- English alert copy has a leading space for an unknown budget
-- long session ids in rankings are clipped without an ellipsis
-- SELECT DISTINCT route runs on every status frame (unindexed); cache or index it
+- 用量页关闭或没有右侧栏时：费用条、会话累计不再响应点击，详情里的“打开用量看板”和提醒里的“查看”不显示。
+- 预算和价格覆盖弹窗每次打开都是新实例（`key`），不再闪出上一次的内容；关掉后才完成的保存不会关掉新打开的弹窗。
+- 某条预算的已用金额查询失败时保留上一次的值，不再显示“已用 ¥0”。
+- 右侧栏打开、输入框变窄时，时段文字以省略号结尾，不再被截断在半个字上。
+- 同一会话的多条读取错误使用不同的 React key。
+- 不认识的预算：中文写“该预算已用…”，英文写“The budget … used”，不再以空格开头。
+- 排行里过长的名称以省略号结尾。
+- 账本出现过的路由在内存里随写入更新，状态帧不再每次扫描账本；重置和回滚的事务会清空这份缓存。这一项是性能改进，测试只覆盖缓存的正确性（重置、回滚）。
