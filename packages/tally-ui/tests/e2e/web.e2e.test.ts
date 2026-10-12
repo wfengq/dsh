@@ -192,10 +192,18 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
   const shot = (name: string) => page.screenshot({ path: join(screenshotDir, `${name}.png`) })
   const tally = (name: string) => page.locator(`[data-tally="${name}"]`)
   const dockItem = (name: string) => tally('dock').locator(`[data-tally-item="${name}"]`)
-  /** Hovers the cost bar so its details card (session, budgets, balance) shows. */
+  /** Hovers the cost bar so its details card (session, budgets, balance) shows, whole and inside the window. */
   async function hoverDock(): Promise<void> {
     await tally('dock').locator('.dsh-tally-dock-bar').hover()
-    await page.locator('.dsh-tally-dock-card').waitFor({ state: 'visible', timeout: 10_000 })
+    const card = page.locator('.dsh-tally-dock-card')
+    await card.waitFor({ state: 'visible', timeout: 10_000 })
+    const panel = await card.boundingBox()
+    const viewport = page.viewportSize()!
+    expect(panel).not.toBeNull()
+    expect(panel!.x).toBeGreaterThanOrEqual(0)
+    expect(panel!.y).toBeGreaterThanOrEqual(0)
+    expect(panel!.x + panel!.width).toBeLessThanOrEqual(viewport.width)
+    expect(panel!.y + panel!.height).toBeLessThanOrEqual(viewport.height)
   }
   /** Screenshots in the light and the dark theme. */
   async function themedShots(name: string): Promise<void> {
@@ -414,6 +422,23 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     expect(await at(1000)).toEqual(['today', 'month', 'budget'])
     expect(await at(800)).toEqual(['today', 'budget'])
     expect(await at(600)).toEqual(['today'])
+    await page.setViewportSize({ width: 1600, height: 1000 })
+  })
+
+  it('keeps the dock details inside the window when the dock sits at its right edge, as in the desktop client', async () => {
+    const collapse = page.getByRole('button', { name: 'Collapse right sidebar' })
+    if (await collapse.isVisible()) await collapse.click()
+    // The desktop client lays the dock out at the right end of the composer's bottom row; pin it there.
+    const pin = await page.addStyleTag({ content: '[data-tally="dock"] { position: fixed; right: 8px; bottom: 8px; }' })
+    for (const width of [1600, 800]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.mouse.move(0, 0)
+      await page.locator('.dsh-tally-dock-card').waitFor({ state: 'hidden', timeout: 10_000 })
+      await hoverDock()
+      await shot(`dock-details-right-edge-${width}`)
+    }
+    await page.mouse.move(0, 0)
+    await pin.evaluate(node => { node.remove() })
     await page.setViewportSize({ width: 1600, height: 1000 })
   })
 
