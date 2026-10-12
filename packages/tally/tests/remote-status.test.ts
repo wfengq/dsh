@@ -54,7 +54,18 @@ describe('tally Remote namespace', () => {
     expect(result.catalogVersion).toBe(ctx.tallyPricing.catalogVersion())
     expect(result.pricingErrors).toEqual([])
     expect(result.budgetErrors).toEqual([])
+    expect(result.routes).toEqual([])
     expect(() => schemas.status.result.parse(result)).not.toThrow()
+  })
+
+  it('lists registered LLM routes, deduplicated and sorted', async () => {
+    class FakeLlm extends Service {
+      constructor(c: Context) { super(c, 'llm') }
+      listProviders() { return [{ id: 'deepseek', name: 'DeepSeek' }, { id: 'b-route', name: 'B' }, { id: 'deepseek', name: 'again' }] }
+    }
+    await ctx.plugin(FakeLlm)
+    const result = await ctx.typertGateway.invoke({ namespace: 'tally', method: 'status', args: {} }) as TallyStatusView
+    expect(result.routes).toEqual(['b-route', 'deepseek'])
   })
 
   it('describes status for the browser', () => {

@@ -349,4 +349,13 @@ describe('TallyStore', () => {
     expect(store.entries({ from: 0, to: 10_000 })).toEqual([])
     expect(store.upsertEntry(entry())).toBe(true)
   })
+
+  it('lists the distinct routes in the ledger, sorted', () => {
+    store = TallyStore.open(join(dir, 'routes.sqlite'))
+    expect(store.distinctRoutes()).toEqual([])
+    store.upsertEntry(entry({ id: 's1:1', route: 'z-route' }))
+    store.upsertEntry(entry({ id: 's1:2', route: 'a-route' }))
+    store.upsertEntry(entry({ id: 's1:3', route: 'z-route' }))
+    expect(store.distinctRoutes()).toEqual(['a-route', 'z-route'])
+  })
 })

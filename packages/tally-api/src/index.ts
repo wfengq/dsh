@@ -122,6 +122,8 @@ export interface TallyStatusView {
   budgetErrors: string[]
   /** Routes with a registered balance provider. */
   balanceRoutes: string[]
+  /** Routes dsh has an LLM adapter for, or that appear in the ledger; deduplicated and sorted. */
+  routes: string[]
 }
 
 /** One frame of the `tally/watch` stream. `hello` is always first and again whenever the client must refresh everything. */

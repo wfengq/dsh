@@ -248,6 +248,11 @@ export class TallyUsage extends Service implements UsageService {
     }
   }
 
+  /** Every route recorded in the ledger, sorted. Internal: not part of `UsageService`. */
+  routes(): string[] {
+    return this.store.distinctRoutes()
+  }
+
   /** Whether a backfill pass or a rebuild is in flight right now. Internal: not part of `UsageService`. */
   backfilling(): boolean {
     return this.state.busy > 0

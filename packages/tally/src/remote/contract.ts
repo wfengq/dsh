@@ -100,6 +100,7 @@ const statusView = z.object({
   pricingErrors: z.array(z.string()),
   budgetErrors: z.array(z.string()),
   balanceRoutes: z.array(z.string()),
+  routes: z.array(z.string()),
 }) satisfies z.ZodType<TallyStatusView>
 
 const budgetAlert = z.object({

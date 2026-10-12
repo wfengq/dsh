@@ -297,6 +297,12 @@ export class TallyStore {
     return this.#select(ENTRY_COLUMNS, filter).map(toEntry)
   }
 
+  /** Every route that appears in the ledger, deleted sessions included, sorted. */
+  distinctRoutes(): string[] {
+    const rows = this.#db.prepare('SELECT DISTINCT route FROM entries ORDER BY route').all() as Array<{ route: string }>
+    return rows.map(r => r.route)
+  }
+
   /**
    * The usage columns of entries matching `filter`, in no particular order: the read behind
    * `query()` and `session()`, kept to the columns they use because it can cover the whole ledger.

@@ -97,7 +97,18 @@ export class TallyRemote extends TypertRemoteService {
       pricingErrors: pricing.configErrors.map(e => e.message),
       budgetErrors: this.ctx.tallyBudget.status().errors,
       balanceRoutes: balance.routes(),
+      routes: this.knownRoutes(),
     }
+  }
+
+  /**
+   * Routes dsh has an adapter for plus routes seen in the ledger. `llm` is read without an
+   * injection: tally runs without it (headless tests, minimal profiles) and only loses the list.
+   */
+  private knownRoutes(): string[] {
+    const llm = this.ctx.get('llm') as { listProviders?(): Array<{ id: string }> } | undefined
+    const configured = llm?.listProviders?.().map(p => p.id) ?? []
+    return [...new Set([...configured, ...this.usage().routes()])].sort()
   }
 
   @Remote
