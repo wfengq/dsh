@@ -80,6 +80,8 @@ export interface TallyStore {
   dismissAlert(alert: BudgetAlert): void
   /** Asks the Host to query one route's balance now and stores the answer. */
   refreshBalance(route: string): Promise<void>
+  /** Reads the budgets (and their spend) again: the settings page calls it after changing one. */
+  refreshBudgets(): Promise<void>
 }
 
 /** Quiet period after the last `recorded` frame before usage is refetched. */
@@ -403,6 +405,7 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
       const key = alertKey(alert)
       alerts.set(alerts.getSnapshot().filter(a => alertKey(a) !== key))
     },
+    refreshBudgets: () => loadBudgets(),
     async refreshBalance(route) {
       const result = await remote.refreshBalance({ route })
       if (result.ok) putBalance(route, result.value)

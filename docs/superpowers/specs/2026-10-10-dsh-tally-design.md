@@ -244,6 +244,8 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 
 ### 5.6 参考界面 `dsh-tally-ui`
 
+> 界面的布局和信息结构已由 [`2026-10-12-dsh-tally-ui-redesign-design.md`](2026-10-12-dsh-tally-ui-redesign-design.md) 取代；本节保留作为最初的设计记录。
+
 所有元素都挂在官方 slot 上，每个元素都可以在设置里单独关闭：
 
 > 2026-10-11 修订：核实 dsh 0.2.0-rc.2 后发现，`conversation.composer.bar` 是只能放一个元素的 slot，占用它会替换掉整个官方输入框。费用条因此改挂在 `conversation.composer.dock`（输入框下方的列表 slot）。预算提醒的弹窗挂在 `shell.overlay`，使用官方 `Toast` 组件。

@@ -71,10 +71,11 @@ function mount(options: {
     removeBudget: vi.fn(async () => ok(undefined)),
     rebuild: vi.fn(async () => ok(undefined)),
   }
-  const props = { remote, overridesForm: overrides, elementsForm: elements, status, generation, budgetSpend, close: () => {}, t } as unknown as SectionProps
+  const refreshBudgets = vi.fn(async () => {})
+  const props = { remote, overridesForm: overrides, elementsForm: elements, status, generation, budgetSpend, refreshBudgets, close: () => {}, t } as unknown as SectionProps
   const view = render(<Section {...props} />)
   if (options.collapsed !== true) fireEvent.click(screen.getByRole('button', { name: zh['settings.advanced'] }))
-  return { overrides, elements, status, generation, remote, ...view }
+  return { overrides, elements, status, generation, remote, refreshBudgets, ...view }
 }
 
 const label = (key: keyof typeof zh) => zh[key]
@@ -94,6 +95,15 @@ describe('catalog info', () => {
     expect(within(row).getByRole('link').getAttribute('href')).toBe('https://example.test/pricing')
     expect(screen.getByText(`${zh['settings.priceVersion']} v7`).closest('[data-tooltip]')).not.toBeNull()
     expect(screen.getByText(zh.disclaimer)).toBeTruthy()
+  })
+})
+
+describe('catalog dates', () => {
+  it('shows only the calendar date of an effective timestamp', async () => {
+    const view = mount()
+    view.remote.catalog.mockImplementation(async () => ok({ ...catalog, providers: [{ ...catalog.providers[0]!, models: [{ ...catalog.providers[0]!.models[0]!, effectiveFrom: '2026-10-10T00:00:00+08:00' }] }] }))
+    act(() => { view.generation.set(2) })
+    expect(await screen.findByText(t('settings.effectiveOn', { date: '2026-10-10' }))).toBeTruthy()
   })
 })
 
@@ -262,6 +272,8 @@ describe('budgets card', () => {
       id: expect.stringMatching(/.+/), period: 'month', scope: { workspaceId: '/w' }, limit: { amount: '20', currency: 'CNY' },
     })
     await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull() })
+    // The conversation's dock reads budgets from the store, which learns of the change here.
+    expect(view.refreshBudgets).toHaveBeenCalled()
   })
 
   it('keeps save disabled and explains an invalid amount', async () => {
@@ -303,6 +315,7 @@ describe('budgets card', () => {
     fireEvent.click(within(row).getByRole('button', { name: label('settings.more') }))
     fireEvent.click(await screen.findByRole('menuitem', { name: label('settings.remove') }))
     await waitFor(() => { expect(view.remote.removeBudget).toHaveBeenCalledWith({ id: 'b1' }) })
+    await waitFor(() => { expect(view.refreshBudgets).toHaveBeenCalledTimes(2) })
   })
 })
 

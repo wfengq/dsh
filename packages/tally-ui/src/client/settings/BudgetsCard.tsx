@@ -68,10 +68,12 @@ function BudgetRow({ budget, spent, onEdit, onRemove, busy, t }: {
 }
 
 /** Budgets as rows with their progress; adding and editing happen in a dialog. */
-export function BudgetsCard({ remote, generation = 0, budgetSpend, t }: {
+export function BudgetsCard({ remote, generation = 0, budgetSpend, onChanged, t }: {
   remote: BudgetsRemote
   generation?: number
   budgetSpend: Snapshot<Readonly<Record<string, Money>>>
+  /** Called after a budget was saved or removed. */
+  onChanged: () => Promise<void>
   t: T
 }): ReactNode {
   const spend = useSnapshot(budgetSpend)
@@ -106,7 +108,10 @@ export function BudgetsCard({ remote, generation = 0, budgetSpend, t }: {
 
   const save = async (budget: Budget) => {
     const result = await remote.setBudget(budget)
-    if (result.ok) await reload()
+    if (result.ok) {
+      await reload()
+      void onChanged().catch(() => {})
+    }
     return result
   }
   const remove = async (id: string) => {
@@ -114,8 +119,10 @@ export function BudgetsCard({ remote, generation = 0, budgetSpend, t }: {
     setError(null)
     try {
       const result = await remote.removeBudget({ id })
-      if (result.ok) await reload()
-      else setError(result.error.message)
+      if (result.ok) {
+        await reload()
+        void onChanged().catch(() => {})
+      } else setError(result.error.message)
     } catch {
       setError(t('settings.saveFailed'))
     } finally {

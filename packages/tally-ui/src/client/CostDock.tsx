@@ -162,7 +162,6 @@ export function CostDock(props: CostDockProps): ReactNode {
       {route !== null
         ? (
             <div className="dsh-tally-dock-line">
-              <span className="dsh-tally-dock-line-label">{t('dock.balance')}</span>
               <BalanceText snapshot={balance} onRefresh={() => refreshBalance(route)} t={t} />
             </div>
           )

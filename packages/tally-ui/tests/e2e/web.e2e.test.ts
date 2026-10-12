@@ -191,7 +191,21 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
 
   const shot = (name: string) => page.screenshot({ path: join(screenshotDir, `${name}.png`) })
   const tally = (name: string) => page.locator(`[data-tally="${name}"]`)
-  const dockItem = (name: string) => tally('dock').locator(`[data-tally="${name}"]`)
+  const dockItem = (name: string) => tally('dock').locator(`[data-tally-item="${name}"]`)
+  /** Hovers the cost bar so its details card (session, budgets, balance) shows. */
+  async function hoverDock(): Promise<void> {
+    await tally('dock').locator('.dsh-tally-dock-bar').hover()
+    await page.locator('.dsh-tally-dock-card').waitFor({ state: 'visible', timeout: 10_000 })
+  }
+  /** Screenshots in the light and the dark theme. */
+  async function themedShots(name: string): Promise<void> {
+    for (const scheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme: scheme })
+      await page.waitForTimeout(300)
+      await shot(`${name}-${scheme}`)
+    }
+    await page.emulateMedia({ colorScheme: 'light' })
+  }
   const finishedTurns = () => page.locator('[data-turn-tail]').count()
 
   /** Connect a fresh workspace directory through the picker of the blank session. */
@@ -232,10 +246,13 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     await page.getByRole('dialog', { name: 'Settings' }).waitFor({ state: 'detached', timeout: 10_000 })
   }
 
-  /** The values of the cost dock that must survive a reconnect (the band countdown ticks, so it is left out). */
+  /** The values of the cost dock and the session total that must survive a reconnect (the band countdown ticks, so it is left out). */
   async function dockValues(): Promise<Record<string, string>> {
     const read = async (name: string) => (await dockItem(name).count()) === 0 ? '<absent>' : await dockItem(name).innerText()
-    return { session: await read('session'), today: await read('today'), balance: await read('balance') }
+    const total = (await tally('total').count()) === 0 ? '<absent>' : await tally('total').innerText()
+    // The budget item is left out: the previous case shrank the limit in the file behind the page's back,
+    // which this window only rereads on its next hello (the reload).
+    return { total, today: await read('today'), month: await read('month'), budget: (await dockItem('budget').count()) === 0 ? '<absent>' : 'present' }
   }
 
   it('shows a priced session cost, the turn cost with its hit rate and the session total after a mocked turn', async () => {
@@ -246,14 +263,16 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     await sendAndFinish('say hi')
 
     await tally('turn').first().waitFor({ timeout: TURN_TIMEOUT })
-    const session = dockItem('session').locator('.dsh-tally-num')
-    await session.waitFor({ timeout: TURN_TIMEOUT })
+    const session = tally('total').locator('.dsh-tally-num')
     // The mocked usage is priced (route deepseek-official, model deepseek-flash): neither unpriced nor zero.
+    await expect.poll(() => session.innerText(), { timeout: TURN_TIMEOUT }).toMatch(/¥/)
     const cost = await session.innerText()
-    expect(cost).toMatch(/¥/)
     expect(cost).not.toContain('Unpriced')
     expect(cost).not.toBe('¥0')
-    expect(await tally('total').innerText()).not.toBe('—')
+    // The dock reads today, then this month; the session cost lives in the header.
+    await expect.poll(() => dockItem('today').innerText(), { timeout: TURN_TIMEOUT }).toMatch(/¥/)
+    expect(await dockItem('month').innerText()).toMatch(/¥/)
+    expect(await dockItem('session').count()).toBe(0)
     await shot('01-conversation')
 
     await tally('turn').first().hover()
@@ -264,7 +283,8 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     await page.mouse.move(0, 0)
   })
 
-  it('shows the stub balance, and after a refused refresh keeps it marked as stale', async () => {
+  it('shows the stub balance in the dock details, and after a refused refresh keeps it marked as stale', async () => {
+    await hoverDock()
     const balance = tally('balance')
     await expect.poll(() => balance.innerText(), { timeout: TURN_TIMEOUT }).toContain('¥110')
     expect(await balance.locator('.dsh-tally-balance-stale').count()).toBe(0)
@@ -277,6 +297,8 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     await balance.locator('.dsh-tally-balance-stale').waitFor({ timeout: 15_000 })
     expect(await balance.innerText()).toContain('¥110')
     await shot('04-balance-stale')
+    await themedShots('dock')
+    await page.mouse.move(0, 0)
   })
 
   it('opens the usage dashboard from the right sidebar, draws the daily bars and exports a CSV', async () => {
@@ -285,10 +307,14 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     const chart = tally('daily-chart')
     await chart.waitFor({ timeout: 15_000 })
     await expect.poll(() => chart.locator('rect.dsh-tally-bar-peak, rect.dsh-tally-bar-offpeak').count()).toBeGreaterThan(0)
+    expect(await tally('overview-today').innerText()).toMatch(/¥/)
+    expect(await tally('rank-row').count()).toBeGreaterThan(0)
     await shot('05-dashboard')
+    await themedShots('dashboard')
 
     const download = page.waitForEvent('download', { timeout: 15_000 })
     await tally('export').click()
+    await page.getByRole('menuitem', { name: 'Export CSV' }).click()
     const file = await download
     expect(file.suggestedFilename()).toMatch(/^tally-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv$/)
     const csv = readFileSync(await file.path(), 'utf8').trim().split('\n')
@@ -299,14 +325,25 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
   it('raises a budget toast in the overlay once a tiny daily budget is exceeded', async () => {
     const dialog = await openTallySettings()
     const budgets = dialog.locator('[data-tally="budgets"]')
-    await budgets.getByRole('textbox', { name: 'Amount' }).fill('0.000001')
     await budgets.getByRole('button', { name: 'Add budget' }).click()
-    // Budgets are named by period and limit, never by their UUID.
-    await budgets.getByText(/^Daily budget · /).waitFor({ timeout: 10_000 })
+    const add = page.getByRole('dialog', { name: 'Add budget' })
+    await add.getByRole('textbox', { name: 'Amount' }).fill('0.01')
+    await add.getByRole('button', { name: 'Save' }).click()
+    await add.waitFor({ state: 'detached', timeout: 10_000 })
+    // Budgets are named by period and scope, never by their UUID.
+    await budgets.getByText('Daily · All workspaces').waitFor({ timeout: 10_000 })
     await shot('06-settings-budget')
     await closeSettings()
+    // The dock now carries the budget.
+    await dockItem('budget').waitFor({ timeout: TURN_TIMEOUT })
+    // The settings page only takes cents; mocked turns cost far less. Shrink the limit in the budget
+    // file itself (the Host rereads it on change) so one more turn crosses it.
+    const file = join(home, 'tally', 'budgets.json')
+    const text = readFileSync(file, 'utf8')
+    expect(text).toMatch(/"amount":\s*"0\.01"/)
+    writeFileSync(file, text.replace(/("amount":\s*)"0\.01"/, '$1"0.000001"'))
 
-    const toast = page.getByRole('alert').filter({ hasText: /"Daily budget · [^"]+" is (80% used|used up)/ })
+    const toast = page.getByRole('alert').filter({ hasText: /Today's budget (\d+% used|exceeded)/ })
     const shown = toast.first().waitFor({ timeout: TURN_TIMEOUT })
     await sendAndFinish('say hi again')
     await shown
@@ -343,12 +380,41 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
       before = next
       return stable
     }, { timeout: TURN_TIMEOUT, intervals: [1000] }).toBe(true)
-    expect(before.session).not.toBe('<absent>')
+    expect(before.total).not.toBe('<absent>')
+    expect(before.budget).not.toBe('<absent>')
 
     await page.reload()
-    await dockItem('session').waitFor({ timeout: TURN_TIMEOUT })
+    await dockItem('budget').waitFor({ timeout: TURN_TIMEOUT })
     await expect.poll(dockValues, { timeout: TURN_TIMEOUT }).toEqual(before)
     await shot('10-after-reload')
+  })
+
+  it('keeps the advanced settings collapsed and shows the price catalog once opened', async () => {
+    const dialog = await openTallySettings()
+    expect(await dialog.locator('[data-tally="catalog"]').count()).toBe(0)
+    await dialog.getByRole('button', { name: 'Advanced' }).click()
+    await dialog.locator('[data-tally="catalog-row"]').first().waitFor({ timeout: 10_000 })
+    expect(await dialog.locator('[data-tally="catalog-row"]').first().innerText()).toContain('Effective')
+    await themedShots('settings')
+    await closeSettings()
+  })
+
+  it('drops the band, then the month, then the budget as the window narrows', async () => {
+    const visible = async () => {
+      const out: string[] = []
+      for (const name of ['today', 'month', 'budget', 'band']) if (await dockItem(name).isVisible()) out.push(name)
+      return out
+    }
+    const at = async (width: number) => {
+      await page.setViewportSize({ width, height: 1000 })
+      await page.waitForTimeout(200)
+      return visible()
+    }
+    expect(await at(1280)).toEqual(['today', 'month', 'budget', 'band'])
+    expect(await at(1000)).toEqual(['today', 'month', 'budget'])
+    expect(await at(800)).toEqual(['today', 'budget'])
+    expect(await at(600)).toEqual(['today'])
+    await page.setViewportSize({ width: 1600, height: 1000 })
   })
 
   it('logged no console errors and dsh printed no warnings or import failures', () => {

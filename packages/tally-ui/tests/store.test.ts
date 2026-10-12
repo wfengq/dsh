@@ -461,4 +461,17 @@ describe('createTallyStore', () => {
     expect(store.month.getSnapshot()?.cost).toEqual([{ amount: '6', currency: 'CNY' }])
     expect(store.budgetSpend.getSnapshot()).toEqual({ d: { amount: '6', currency: 'CNY' } })
   })
+
+  it('reloads the budgets and their spend on refreshBudgets, e.g. after the settings page saved one', async () => {
+    const daily: Budget = { id: 'd', period: 'day', scope: {}, limit: { amount: '10', currency: 'CNY' } }
+    const store = make()
+    store.start(controller.signal)
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    expect(store.budgets.getSnapshot()).toEqual([])
+    api.budgets.mockImplementation(async () => ok([daily]))
+    await store.refreshBudgets()
+    expect(store.budgets.getSnapshot()).toEqual([daily])
+    expect(store.budgetSpend.getSnapshot()).toEqual({ d: { amount: '1', currency: 'CNY' } })
+  })
 })

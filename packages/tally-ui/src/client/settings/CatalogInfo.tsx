@@ -39,7 +39,7 @@ export function CatalogInfo({ load, t }: { load: () => Promise<CatalogView | nul
             hint={`${provider.id} · ${provider.currency}`}
             control={(
               <>
-                <span className="dsh-tally-row-muted">{t('settings.effectiveOn', { date: model.effectiveFrom })}</span>
+                <span className="dsh-tally-row-muted">{t('settings.effectiveOn', { date: model.effectiveFrom.slice(0, 10) })}</span>
                 {isWebUrl(model.source.url)
                   ? <a className="dsh-tally-link" href={model.source.url} target="_blank" rel="noreferrer noopener">{t('settings.source')}</a>
                   : <span className="dsh-tally-row-muted">{`${t('settings.source')}: ${model.source.url}`}</span>}

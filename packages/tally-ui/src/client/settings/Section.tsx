@@ -29,12 +29,14 @@ export interface SectionInjected {
   generation: Snapshot<number>
   /** The store's per-budget spend over each budget's current period. */
   budgetSpend: Snapshot<Readonly<Record<string, Money>>>
+  /** Tells the store a budget changed, so the dock and the dashboard follow at once. */
+  refreshBudgets: () => Promise<void>
 }
 
 export type SectionProps = SectionInjected & { close: () => void; t: T }
 
 /** Usage and cost page of the settings panel. */
-export function Section({ remote, overridesForm, elementsForm, status, generation, budgetSpend, t }: SectionProps): ReactNode {
+export function Section({ remote, overridesForm, elementsForm, status, generation, budgetSpend, refreshBudgets, t }: SectionProps): ReactNode {
   const hello = useSnapshot(generation)
   const [advanced, setAdvanced] = useState(false)
   // A new `hello` gives a new loader, which CatalogInfo and BudgetsCard key their loads on.
@@ -44,7 +46,7 @@ export function Section({ remote, overridesForm, elementsForm, status, generatio
   }, [remote, hello])
   return (
     <div className="dsh-tally-settings" data-tally="settings">
-      <BudgetsCard remote={remote} generation={hello} budgetSpend={budgetSpend} t={t} />
+      <BudgetsCard remote={remote} generation={hello} budgetSpend={budgetSpend} onChanged={refreshBudgets} t={t} />
       <ElementSwitches form={elementsForm} t={t} />
       <Problems status={status} t={t} />
       <div className="dsh-tally-advanced" data-tally="advanced">

@@ -161,6 +161,7 @@ export async function apply(ctx: Context): Promise<void> {
         status: store.status,
         generation: store.generation,
         budgetSpend: store.budgetSpend,
+        refreshBudgets: () => store.refreshBudgets(),
       }
       return scope.slots.register({
         name: SETTINGS_SECTION,

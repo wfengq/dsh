@@ -1,8 +1,10 @@
-/* One line under the composer; items drop out by priority as the line narrows (band, month, budget). */
+/*
+ * One line under the composer; items drop out by priority as the window narrows (band, month, budget).
+ * The dock row sizes its items to their content, so the line cannot be a size container (that would
+ * collapse it to zero width); the window width stands in for the composer width.
+ */
 .dsh-tally-dock {
-  container-type: inline-size;
   display: block;
-  min-width: 0;
   padding: 2px 12px;
   font-size: 12px;
   line-height: 18px;
@@ -62,15 +64,15 @@
   background: currentColor;
 }
 
-@container (max-width: 640px) {
+@media (max-width: 1100px) {
   .dsh-tally-dock-item[data-tally-item="band"] { display: none; }
 }
 
-@container (max-width: 420px) {
+@media (max-width: 860px) {
   .dsh-tally-dock-item[data-tally-item="month"] { display: none; }
 }
 
-@container (max-width: 300px) {
+@media (max-width: 640px) {
   .dsh-tally-dock-item[data-tally-item="budget"] { display: none; }
 }
 
@@ -86,21 +88,20 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-width: 240px;
+  max-width: 320px;
   padding: 4px 2px;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-primary);
+  color: inherit;
 }
 
 .dsh-tally-dock-line {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  white-space: nowrap;
+  gap: 12px;
 }
 
-.dsh-tally-dock-line-label { color: var(--dsw-alias-label-secondary); }
+.dsh-tally-dock-line-label { opacity: 0.7; }
 .dsh-tally-dock-line[data-tone="warn"] .dsh-tally-num { color: var(--dsw-alias-state-warn-primary); }
 .dsh-tally-dock-line[data-tone="over"] .dsh-tally-num { color: var(--dsw-alias-state-error-primary); }
