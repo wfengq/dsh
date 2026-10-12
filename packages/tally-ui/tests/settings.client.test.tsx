@@ -276,6 +276,17 @@ describe('budgets card', () => {
     expect(view.refreshBudgets).toHaveBeenCalled()
   })
 
+  it('leaves the period alone when its caption is clicked', async () => {
+    const budget: Budget = { id: 'b1', period: 'month', scope: {}, limit: { amount: '10', currency: 'CNY' } }
+    mount({ budgets: [budget] })
+    const row = (await screen.findByText(`${label('settings.budget.month')} · ${label('settings.budget.allWorkspaces')}`)).closest('[data-tally="budget-row"]') as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: label('settings.more') }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: label('settings.budget.edit') }))
+    const dialog = screen.getByRole('dialog', { name: label('settings.budget.edit') })
+    fireEvent.click(within(dialog).getByText(label('settings.budget.period')))
+    expect(within(dialog).getByRole('tab', { name: label('settings.budget.month') }).getAttribute('aria-selected')).toBe('true')
+  })
+
   it('keeps save disabled and explains an invalid amount', async () => {
     mount()
     const dialog = await openAdd()

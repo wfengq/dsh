@@ -27,3 +27,24 @@
 - Task 7: Ruling: no e2e for merged unreadable sessions — corrupt session files in the test DSH_HOME risk dsh's own UI logging errors; covered by problems.test.ts and the settings client tests (plan's fallback) — cost if wrong: one more e2e later.
 - Task 7: Ruling: price catalog shows only the date part of effectiveFrom (timestamps read as 2026-10-10) — cost if wrong: none.
 - Task 7: Ruling: skipped the local alpha-channel e2e rerun; the compat CI runs latest and alpha on every push — cost if wrong: an alpha regression shows up in CI instead of locally.
+
+## 最终审查
+
+独立审查：0 个严重、3 个重要、9 个次要问题。3 个重要问题和一个升级为重要的次要问题已修复，各有先失败后通过的测试。
+
+- Final: fixed totals stale after a backfill/rebuild — "reloads today, the month and budget spend and bumps recorded when a backfill ends" RED→GREEN, suite 654/654
+- Final: fixed rankings reset to Sessions / collapsed on every refresh — "applies the focused session once and keeps the user's ranking choice across data refreshes" RED→GREEN, suite 654/654
+- Final: fixed hover-only details unreachable by keyboard (balance refresh, subagents) — Details wrapper opens a panel on keyboard focus; "opens the same details for keyboard focus…", "shows the subagent list to keyboard focus as well", "does not open the keyboard panel for the focus that follows a click" RED→GREEN, suite 654/654
+- Final: Ruling: re-graded the reviewer's Minor "clicking 周期 caption switches an edited monthly budget to daily" to Important (silently changes user data) and fixed it — "leaves the period alone when its caption is clicked" RED→GREEN — cost if wrong: none.
+- Final: Ruling: keyboard focus is told apart from click focus by a pointerdown flag rather than :focus-visible (jsdom and some hosts lack it) — cost if wrong: a programmatic focus would also open the panel.
+
+## 暂缓的次要问题
+
+- clicking the dock / session total / toast "查看" does nothing while the usage tab is switched off
+- budget and override dialogs reset in an effect (one-frame flash; a late save can close a reopened dialog) — use a key instead
+- a refused per-budget spend query shows "已用 ¥0" instead of keeping the previous value or "—"
+- with the right sidebar open the composer narrows but the window does not, so media-query collapse can clip the band text
+- duplicate React keys in the session problem list when one session errors twice
+- English alert copy has a leading space for an unknown budget
+- long session ids in rankings are clipped without an ellipsis
+- SELECT DISTINCT route runs on every status frame (unindexed); cache or index it

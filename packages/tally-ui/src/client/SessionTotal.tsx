@@ -1,7 +1,7 @@
-import { HoverCard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionView, UsageGroup } from 'dsh-tally-api'
+import { Details } from './Details.tsx'
 import type { Elements } from './elements.ts'
 import { costLabel, type T } from './labels.ts'
 import type { Snapshot } from './store.ts'
@@ -91,7 +91,7 @@ export function SessionTotal({ useElements, useSession, sessionId, loadModels, o
   )
   return (
     <span className="dsh-tally-total">
-      <HoverCard anchor={button} content={card} />
+      <Details anchor={button} content={card} label={t('header.total')} />
     </span>
   )
 }

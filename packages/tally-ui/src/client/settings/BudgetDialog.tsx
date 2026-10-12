@@ -73,7 +73,7 @@ export function BudgetDialog({ open, editing, existing, workspaces, save, onClos
       )}
     >
       <div className="dsh-tally-dialog" data-tally="budget-dialog">
-        <label className="dsh-tally-field">
+        <div className="dsh-tally-field">
           <span className="dsh-tally-field-label">{t('settings.budget.period')}</span>
           <SegmentedControl
             id="dsh-tally-budget-period"
@@ -82,7 +82,7 @@ export function BudgetDialog({ open, editing, existing, workspaces, save, onClos
             options={[{ value: 'day', label: t('settings.budget.day') }, { value: 'month', label: t('settings.budget.month') }]}
             onChange={setPeriod}
           />
-        </label>
+        </div>
         <div className="dsh-tally-field">
           <span className="dsh-tally-field-label">{t('settings.budget.scope')}</span>
           <Menu

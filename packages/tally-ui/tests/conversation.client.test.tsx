@@ -124,6 +124,29 @@ describe('CostDock', () => {
     expect(card.textContent).toContain(zh['dock.openDashboard'])
   })
 
+  it('opens the same details for keyboard focus, with the balance refresh reachable, and closes on Escape', async () => {
+    const props = dockProps({ balances: { deepseek: balance({ wallets: [{ kind: 'total', money: cny('9') }] }) } })
+    render(<CostDock {...props} />)
+    await settle()
+    const bar = screen.getByRole('button', { name: new RegExp(zh['dock.today']) })
+    fireEvent.focus(bar)
+    const panel = screen.getByRole('dialog', { name: zh['dock.details'] })
+    expect(panel.querySelector('[data-tally="balance"]')?.textContent).toContain('¥9')
+    fireEvent.click(panel.querySelector('[data-tally="balance"]')!)
+    expect(props.refreshBalance).toHaveBeenCalledWith('deepseek')
+    fireEvent.keyDown(panel, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
+  })
+
+  it('does not open the keyboard panel for the focus that follows a click', async () => {
+    render(<CostDock {...dockProps()} />)
+    await settle()
+    const bar = screen.getByRole('button', { name: new RegExp(zh['dock.today']) })
+    fireEvent.pointerDown(bar)
+    fireEvent.focus(bar)
+    expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
+  })
+
   it('opens the dashboard when the bar is clicked', async () => {
     const props = dockProps()
     render(<CostDock {...props} />)
@@ -307,6 +330,14 @@ describe('SessionTotal', () => {
     expect(button.textContent).toContain('¥5')
     fireEvent.click(button)
     expect(openDashboard).toHaveBeenCalledWith('s1')
+  })
+
+  it('shows the subagent list to keyboard focus as well', async () => {
+    const view = sessionView(group([cny('5')]), [{ sessionId: 'sub-a', total: group([cny('1.25')]) }])
+    render(total(view))
+    fireEvent.focus(document.querySelector('[data-tally="total"]')!)
+    const panel = screen.getByRole('dialog', { name: zh['header.total'] })
+    expect(panel.querySelector('[data-tally="subagent"]')?.textContent).toContain('sub-a')
   })
 
   it('splits the session by model and lists subagents on hover', async () => {

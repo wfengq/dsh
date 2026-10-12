@@ -309,11 +309,21 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
         reloadAll()
         generation.set(generation.getSnapshot() + 1)
         break
-      case 'status':
+      case 'status': {
+        // A backfill or rebuild writes entries without `recorded` frames: when one ends, the
+        // totals are read again and the dashboard is told new usage was written.
+        const wasBackfilling = status.getSnapshot()?.usage.backfill != null
         status.set(frame.status)
+        if (wasBackfilling && frame.status.usage.backfill === null) {
+          fire(loadToday())
+          fire(loadMonth())
+          fire(loadBudgetSpend())
+          recorded.set(recorded.getSnapshot() + 1)
+        }
         // A balance provider registered after the `hello` shows up here first.
         for (const route of addRoutes(frame.status)) fire(loadBalance(route))
         break
+      }
       case 'recorded':
         scheduleRecorded([frame.entry.sessionId, frame.entry.rootSessionId])
         break

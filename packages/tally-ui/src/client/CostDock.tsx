@@ -1,10 +1,11 @@
-import { HoverCard, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { BalanceSnapshot, BandView, Budget, Money, SessionView, TallyStatusView, UsageGroup } from 'dsh-tally-api'
 import { BalanceText } from './BalanceText.tsx'
 import { budgetRatio, budgetTone, pickDockBudget } from './budget-progress.ts'
 import { addDecimal } from './dashboard/decimal.ts'
+import { Details } from './Details.tsx'
 import type { Elements } from './elements.ts'
 import { formatCountdown, formatMoney } from './format.ts'
 import { budgetName, costLabel, FORMAT_LOCALE, type T } from './labels.ts'
@@ -173,7 +174,7 @@ export function CostDock(props: CostDockProps): ReactNode {
 
   return (
     <div className="dsh-tally-dock" data-tally="dock">
-      <HoverCard anchor={bar} content={details} />
+      <Details anchor={bar} content={details} label={t('dock.details')} />
     </div>
   )
 }

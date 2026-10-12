@@ -474,4 +474,24 @@ describe('createTallyStore', () => {
     expect(store.budgets.getSnapshot()).toEqual([daily])
     expect(store.budgetSpend.getSnapshot()).toEqual({ d: { amount: '1', currency: 'CNY' } })
   })
+
+  it('reloads today, the month and budget spend and bumps recorded when a backfill ends', async () => {
+    const daily: Budget = { id: 'd', period: 'day', scope: {}, limit: { amount: '10', currency: 'CNY' } }
+    api.budgets.mockImplementation(async () => ok([daily]))
+    const store = make()
+    store.start(controller.signal)
+    queue.push({ type: 'hello', status: { ...status(), usage: { backfill: { done: 1, total: 5 }, errors: [] } } })
+    await flush()
+    const recordedBefore = store.recorded.getSnapshot()
+    todayAmount = '9'
+    queue.push({ type: 'status', status: { ...status(), usage: { backfill: { done: 3, total: 5 }, errors: [] } } })
+    await flush()
+    expect(store.month.getSnapshot()?.cost).toEqual([{ amount: '1', currency: 'CNY' }])
+    queue.push({ type: 'status', status: status() })
+    await flush()
+    expect(store.today.getSnapshot()?.cost).toEqual([{ amount: '9', currency: 'CNY' }])
+    expect(store.month.getSnapshot()?.cost).toEqual([{ amount: '9', currency: 'CNY' }])
+    expect(store.budgetSpend.getSnapshot()).toEqual({ d: { amount: '9', currency: 'CNY' } })
+    expect(store.recorded.getSnapshot()).toBe(recordedBefore + 1)
+  })
 })

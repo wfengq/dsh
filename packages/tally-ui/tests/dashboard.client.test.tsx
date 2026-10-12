@@ -298,3 +298,21 @@ describe('Dashboard', () => {
     expect(total()).toBe(t('tab.rangeTotal', { total: '¥7' }))
   })
 })
+
+describe('Rankings focus', () => {
+  it('applies the focused session once and keeps the user\'s ranking choice across data refreshes', async () => {
+    const { Rankings } = await import('../src/client/dashboard/Rankings.tsx')
+    const sessions = (n: number) => Array.from({ length: n }, (_, i) => group(`s${i}`, { cost: [cny(String(20 - i))] }))
+    const models = [group('m1', { cost: [cny('1')] })]
+    const view = render(<Rankings models={models} workspaces={[]} sessions={sessions(12)} focusSession="s1" t={t} />)
+    fireEvent.click(screen.getByRole('tab', { name: zh['tab.byModel'] }))
+    expect(document.querySelector('[data-tally="ranking-model"]')).not.toBeNull()
+    // A refresh hands a new sessions array with the same focus: the model ranking stays selected.
+    view.rerender(<Rankings models={models} workspaces={[]} sessions={sessions(12)} focusSession="s1" t={t} />)
+    expect(document.querySelector('[data-tally="ranking-model"]')).not.toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: zh['tab.bySession'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['tab.showAll'] }))
+    view.rerender(<Rankings models={models} workspaces={[]} sessions={sessions(12)} focusSession="s1" t={t} />)
+    expect(document.querySelectorAll('[data-tally="ranking-session"] [data-tally="rank-row"]')).toHaveLength(12)
+  })
+})
