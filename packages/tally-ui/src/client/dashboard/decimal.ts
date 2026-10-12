@@ -31,3 +31,11 @@ export function compareDecimal(a: string, b: string): number {
   const y = scaled(b, scale)
   return x < y ? -1 : x > y ? 1 : 0
 }
+
+/** `a / b` as a float for display (progress bars, percentages); exact to four decimal places. `0` when `b` is zero. */
+export function ratioDecimal(a: string, b: string): number {
+  const scale = Math.max(parts(a).scale, parts(b).scale)
+  const y = scaled(b, scale)
+  if (y === 0n) return 0
+  return Number((scaled(a, scale) * 10_000n) / y) / 10_000
+}

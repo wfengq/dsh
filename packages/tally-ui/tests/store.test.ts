@@ -9,7 +9,7 @@ const ok = <T>(value: T) => ({ ok: true as const, value })
 const fail = (message: string) => ({ ok: false as const, error: new Error(message) })
 
 const status = (catalogVersion = 'v1', balanceRoutes: string[] = []): TallyStatusView => ({
-  usage: { backfill: null, errors: [] }, catalogVersion, pricingErrors: [], budgetErrors: [], balanceRoutes,
+  usage: { backfill: null, errors: [] }, catalogVersion, pricingErrors: [], budgetErrors: [], balanceRoutes, routes: [],
 })
 const group = (amount: string): UsageGroup => ({
   key: 'day', tokens: { input: 1, cacheRead: 0, cacheWrite: 0, output: 1 }, cost: [{ amount, currency: 'CNY' }],
@@ -93,6 +93,8 @@ describe('createTallyStore', () => {
   })
 
   const make = () => createTallyStore(face, { timeZone: 'Asia/Shanghai' })
+  /** Queries spanning at most one local day: "today" (and daily budgets); the month query spans more. */
+  const dayCalls = () => api.query.mock.calls.filter(c => c[0].to - c[0].from <= 25 * 3600_000)
 
   it('fetches today once after hello, over the local day in the configured time zone', async () => {
     const store = make()
@@ -100,8 +102,8 @@ describe('createTallyStore', () => {
     expect(store.today.getSnapshot()).toBeNull()
     queue.push({ type: 'hello', status: status('v7') })
     await flush()
-    expect(api.query).toHaveBeenCalledTimes(1)
-    const request = api.query.mock.calls[0]![0]
+    expect(dayCalls()).toHaveLength(1)
+    const request = dayCalls()[0]![0]
     // 2026-10-11 11:00 in Shanghai: the day is [10-11 00:00, 10-12 00:00) +08:00.
     expect(request.from).toBe(Date.UTC(2026, 9, 10, 16))
     expect(request.to).toBe(Date.UTC(2026, 9, 11, 16))
@@ -152,7 +154,7 @@ describe('createTallyStore', () => {
     expect(api.query).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(500)
     await flush()
-    expect(api.query).toHaveBeenCalledTimes(1)
+    expect(dayCalls()).toHaveLength(1)
     expect(api.session).toHaveBeenCalledTimes(1)
     expect(store.today.getSnapshot()?.cost[0]?.amount).toBe('2')
   })
@@ -188,7 +190,7 @@ describe('createTallyStore', () => {
     await flush()
     await vi.advanceTimersByTimeAsync(600)
     await flush()
-    expect(api.query).toHaveBeenCalledTimes(1)
+    expect(dayCalls()).toHaveLength(1)
     expect(api.session).toHaveBeenCalledTimes(1)
     expect(store.today.getSnapshot()?.cost[0]?.amount).toBe('5')
     expect(store.balances.getSnapshot().r1?.wallets[0]?.money.amount).toBe('45')
@@ -343,26 +345,26 @@ describe('createTallyStore', () => {
     store.start(controller.signal)
     queue.push({ type: 'hello', status: status() })
     await flush()
-    expect(api.query).toHaveBeenCalledTimes(1)
+    expect(dayCalls()).toHaveLength(1)
     todayAmount = '0.5'
     await vi.advanceTimersByTimeAsync(Date.UTC(2026, 9, 11, 16) - Date.now() - 1)
-    expect(api.query).toHaveBeenCalledTimes(1)
+    expect(dayCalls()).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(1)
     await flush()
-    expect(api.query).toHaveBeenCalledTimes(2)
-    const request = api.query.mock.calls[1]![0]
+    expect(dayCalls()).toHaveLength(2)
+    const request = dayCalls()[1]![0]
     expect(request.from).toBe(Date.UTC(2026, 9, 11, 16))
     expect(request.to).toBe(Date.UTC(2026, 9, 12, 16))
     expect(store.today.getSnapshot()?.cost[0]?.amount).toBe('0.5')
     // Re-armed for the following midnight.
     await vi.advanceTimersByTimeAsync(86_400_000)
     await flush()
-    expect(api.query).toHaveBeenCalledTimes(3)
-    expect(api.query.mock.calls[2]![0].from).toBe(Date.UTC(2026, 9, 12, 16))
+    expect(dayCalls()).toHaveLength(3)
+    expect(dayCalls()[2]![0].from).toBe(Date.UTC(2026, 9, 12, 16))
     controller.abort()
     expect(vi.getTimerCount()).toBe(0)
     await vi.advanceTimersByTimeAsync(2 * 86_400_000)
-    expect(api.query).toHaveBeenCalledTimes(3)
+    expect(dayCalls()).toHaveLength(3)
   })
 
   it('keeps one midnight timer however often today reloads', async () => {
@@ -413,5 +415,50 @@ describe('createTallyStore', () => {
     queue.push({ type: 'hello', status: status('v1', []) })
     await flush()
     expect(api.balance).toHaveBeenCalledWith({ route: 'r2' })
+  })
+
+  it('loads the month and each budget\'s spend on hello, scoped by period and workspace', async () => {
+    const daily: Budget = { id: 'd', period: 'day', scope: {}, limit: { amount: '10', currency: 'CNY' } }
+    const monthly: Budget = { id: 'm', period: 'month', scope: { workspaceId: '/w' }, limit: { amount: '5', currency: 'USD' } }
+    api.budgets.mockImplementation(async () => ok([daily, monthly]))
+    api.query.mockImplementation(async (q: { from: number; filter?: { workspaceId?: string } }) =>
+      ok(q.filter?.workspaceId === '/w' ? [group('7')] : [group('2'), group('3')]))
+    const store = make()
+    store.start(controller.signal)
+    expect(store.month.getSnapshot()).toBeNull()
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    // 2026-10 in Shanghai: [10-01 00:00, 11-01 00:00) +08:00.
+    const monthStart = Date.UTC(2026, 8, 30, 16)
+    const monthEnd = Date.UTC(2026, 9, 31, 16)
+    const monthCall = api.query.mock.calls.find(c => c[0].from === monthStart && c[0].filter === undefined)
+    expect(monthCall?.[0].to).toBe(monthEnd)
+    expect(store.month.getSnapshot()?.cost).toEqual([{ amount: '5', currency: 'CNY' }])
+    expect(store.month.getSnapshot()?.requestCount).toBe(2)
+    const scoped = api.query.mock.calls.find(c => c[0].filter?.workspaceId === '/w')
+    expect(scoped?.[0]).toMatchObject({ from: monthStart, to: monthEnd })
+    // The daily budget spends the whole day in CNY; the monthly one only has CNY spend, so 0 USD.
+    expect(store.budgetSpend.getSnapshot()).toEqual({ d: { amount: '5', currency: 'CNY' }, m: { amount: '0', currency: 'USD' } })
+  })
+
+  it('refetches the month and budget spend after recorded frames and on a new hello', async () => {
+    const daily: Budget = { id: 'd', period: 'day', scope: {}, limit: { amount: '10', currency: 'CNY' } }
+    api.budgets.mockImplementation(async () => ok([daily]))
+    const store = make()
+    store.start(controller.signal)
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    expect(store.budgetSpend.getSnapshot()).toEqual({ d: { amount: '1', currency: 'CNY' } })
+    todayAmount = '4'
+    queue.push({ type: 'recorded', entry: entry() })
+    await vi.advanceTimersByTimeAsync(600)
+    await flush()
+    expect(store.month.getSnapshot()?.cost).toEqual([{ amount: '4', currency: 'CNY' }])
+    expect(store.budgetSpend.getSnapshot()).toEqual({ d: { amount: '4', currency: 'CNY' } })
+    todayAmount = '6'
+    queue.push({ type: 'hello', status: status() })
+    await flush()
+    expect(store.month.getSnapshot()?.cost).toEqual([{ amount: '6', currency: 'CNY' }])
+    expect(store.budgetSpend.getSnapshot()).toEqual({ d: { amount: '6', currency: 'CNY' } })
   })
 })

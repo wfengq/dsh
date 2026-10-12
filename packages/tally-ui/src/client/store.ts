@@ -4,7 +4,9 @@
  * Host, so a reconnect cannot count anything twice.
  */
 import type { TallyRemoteApi } from 'dsh-tally/remote'
-import type { BalanceSnapshot, Budget, BudgetAlert, SessionView, TallyStatusView, TallyWatchFrame, UsageGroup } from 'dsh-tally-api'
+import type { BalanceSnapshot, Budget, BudgetAlert, Currency, Money, SessionView, TallyStatusView, TallyWatchFrame, UsageGroup } from 'dsh-tally-api'
+import { spentIn } from './budget-progress.ts'
+import { addDecimal } from './dashboard/decimal.ts'
 
 /** The part of `ctx.remote.tally` the store uses. */
 export type TallyRemoteFace = Pick<TallyRemoteApi, 'status' | 'query' | 'session' | 'balance' | 'refreshBalance' | 'budgets' | 'watch'>
@@ -67,6 +69,10 @@ export interface TallyStore {
   readonly balances: Snapshot<Readonly<Record<string, BalanceSnapshot>>>
   /** Usage of the current local day; `null` until loaded. */
   readonly today: Snapshot<UsageGroup | null>
+  /** Usage of the current local calendar month; `null` until loaded. */
+  readonly month: Snapshot<UsageGroup | null>
+  /** Spend of each budget over its current period and scope, in the budget's currency, by budget id. */
+  readonly budgetSpend: Snapshot<Readonly<Record<string, Money>>>
   /** One session's usage; `null` until loaded. The same instance is returned for the same id. */
   session(sessionId: string): Snapshot<SessionView | null>
   /** Budget alerts not yet shown, oldest first. */
@@ -90,6 +96,33 @@ function zoneOffset(at: number, zone: string): number {
   return Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute'), n('second')) - Math.floor(at / 1000) * 1000
 }
 
+/** Epoch milliseconds of local midnight on the first day of the month containing `at`, `monthShift` months later. */
+function localMonthStart(at: number, zone: string, monthShift: number): number {
+  const local = new Date(at + zoneOffset(at, zone))
+  const wall = Date.UTC(local.getUTCFullYear(), local.getUTCMonth() + monthShift, 1)
+  let guess = wall - zoneOffset(at, zone)
+  guess = wall - zoneOffset(guess, zone)
+  return guess
+}
+
+/** One group summing several (the days of a month): costs add up per currency, never across. */
+function sumGroups(groups: readonly UsageGroup[]): UsageGroup {
+  const total = emptyGroup()
+  const cost = new Map<Currency, string>()
+  for (const g of groups) {
+    total.tokens.input += g.tokens.input
+    total.tokens.cacheRead += g.tokens.cacheRead
+    total.tokens.cacheWrite += g.tokens.cacheWrite
+    total.tokens.output += g.tokens.output
+    total.requestCount += g.requestCount
+    total.unpricedCount += g.unpricedCount
+    total.unknownUsageCount += g.unknownUsageCount
+    for (const m of g.cost) cost.set(m.currency, addDecimal(cost.get(m.currency) ?? '0', m.amount))
+  }
+  total.cost = [...cost].map(([currency, amount]) => ({ amount, currency }))
+  return total
+}
+
 /** Epoch milliseconds of local midnight of the day containing `at`, `dayShift` days later. */
 function localMidnight(at: number, zone: string, dayShift: number): number {
   const local = new Date(at + zoneOffset(at, zone))
@@ -106,6 +139,8 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
   const status = createSnapshot<TallyStatusView | null>(null)
   const balances = createSnapshot<Readonly<Record<string, BalanceSnapshot>>>({})
   const today = createSnapshot<UsageGroup | null>(null)
+  const month = createSnapshot<UsageGroup | null>(null)
+  const budgetSpend = createSnapshot<Readonly<Record<string, Money>>>({})
   const alerts = createSnapshot<readonly BudgetAlert[]>([])
   const generation = createSnapshot(0)
   const recorded = createSnapshot(0)
@@ -117,6 +152,8 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
   const refs = new Map<string, number>()
   const knownRoutes = new Set<string>()
   let todaySeq = 0
+  let monthSeq = 0
+  let spendSeq = 0
   let budgetsSeq = 0
   let started = false
   let stopped = false
@@ -131,6 +168,8 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     midnight = setTimeout(() => {
       midnight = undefined
       fire(loadToday())
+      fire(loadMonth())
+      fire(loadBudgetSpend())
     }, delay)
   }
 
@@ -143,6 +182,36 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     })
     if (seq !== todaySeq || !result.ok) return
     today.set(result.value[0] ?? emptyGroup())
+  }
+
+  async function loadMonth(): Promise<void> {
+    const seq = ++monthSeq
+    const at = now()
+    const result = await remote.query({
+      from: localMonthStart(at, opts.timeZone, 0), to: localMonthStart(at, opts.timeZone, 1), groupBy: 'day', tz: opts.timeZone,
+    })
+    if (seq !== monthSeq || !result.ok) return
+    month.set(sumGroups(result.value))
+  }
+
+  /** Spend of every loaded budget over its current period; one query per budget. */
+  async function loadBudgetSpend(): Promise<void> {
+    const list = budgets.getSnapshot()
+    if (list === null) return
+    const seq = ++spendSeq
+    const at = now()
+    const answers = await Promise.all(list.map(async (budget) => {
+      const bounds = budget.period === 'day'
+        ? { from: localMidnight(at, opts.timeZone, 0), to: localMidnight(at, opts.timeZone, 1) }
+        : { from: localMonthStart(at, opts.timeZone, 0), to: localMonthStart(at, opts.timeZone, 1) }
+      const filter = budget.scope.workspaceId === undefined ? undefined : { workspaceId: budget.scope.workspaceId }
+      const result = await remote.query({ ...bounds, groupBy: 'day', tz: opts.timeZone, ...(filter ? { filter } : {}) })
+      return result.ok ? [budget.id, spentIn(sumGroups(result.value), budget.limit.currency)] as const : null
+    }))
+    if (seq !== spendSeq) return
+    const next: Record<string, Money> = {}
+    for (const answer of answers) if (answer !== null) next[answer[0]] = answer[1]
+    budgetSpend.set(next)
   }
 
   async function loadSession(sessionId: string): Promise<void> {
@@ -164,6 +233,7 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     const result = await remote.budgets()
     if (seq !== budgetsSeq || !result.ok) return
     budgets.set(result.value)
+    await loadBudgetSpend()
   }
 
   /** Adds the routes of a status to the known ones; returns those that were new. */
@@ -191,6 +261,7 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
   function reloadAll(): void {
     cancelRecorded()
     fire(loadToday())
+    fire(loadMonth())
     for (const id of openSessions()) fire(loadSession(id))
     for (const route of [...knownRoutes]) fire(loadBalance(route))
     fire(loadBudgets())
@@ -214,6 +285,8 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     cancelRecorded()
     if (refetchToday) {
       fire(loadToday())
+      fire(loadMonth())
+      fire(loadBudgetSpend())
       recorded.set(recorded.getSnapshot() + 1)
     }
     for (const id of ids) if (sessions.has(id) && !closed.has(id)) fire(loadSession(id))
@@ -290,6 +363,8 @@ export function createTallyStore(remote: TallyRemoteFace, opts: TallyStoreOption
     status,
     balances,
     today,
+    month,
+    budgetSpend,
     alerts,
     session(sessionId) {
       let snapshot = sessions.get(sessionId)
