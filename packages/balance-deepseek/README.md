@@ -32,7 +32,7 @@ API key 只会出现在发往 `baseURL` 的请求头里。任何错误信息都�
 ## 安装
 
 ```sh
-dsh plugin --profile web add dsh-tally dsh-tally-balance-deepseek
+dsh plugin --profile web add dsh-tally@beta dsh-tally-balance-deepseek@beta
 ```
 
 插件依赖 `tallyBalance` 服务（由 `dsh-tally` 提供）。`credentials` 服务不在时不注册 API key 路由，`deepseekAccount` 服务不在时不注册账号路由；服务消失时对应路由会自动注销。

@@ -2,7 +2,7 @@
 
 DeepSeek Harness（dsh）的**用量、计价、余额与预算共享数据层**。dsh 自己能统计 token 数，但没有价格数据、费用账本、余额查询和预算功能。dsh-tally 补上这几块，并以服务的形式提供出来：其他插件可以直接依赖，不必各自维护一份价格表、各自解析会话日志。
 
-> 状态：开发完成，**尚未发布到 npm**。
+> 状态：**预览版**（`0.1.0-beta.0`，npm 标签 `beta`）。dsh 0.2 还没有正式版，插件接口在那之前可能变化；dsh 0.2 正式发布、计价经过更多天的对账验证后，再发布 `0.1.0` 正式版。
 
 ## 包
 
@@ -17,12 +17,12 @@ DeepSeek Harness（dsh）的**用量、计价、余额与预算共享数据层**
 ## 安装
 
 ```sh
-dsh plugin --profile web add dsh-tally dsh-tally-ui dsh-tally-balance-deepseek
+dsh plugin --profile web add dsh-tally@beta dsh-tally-ui@beta dsh-tally-balance-deepseek@beta
 ```
 
 只想在终端或 headless 模式下记账时，装 `dsh-tally` 一个包即可。
 
-还没有发布到 npm，目前请按 [本地安装步骤](docs/local-install.md) 从源码安装。
+桌面客户端把 `--profile web` 换成 `--profile desktop`，并在客户端完全退出时运行。想从源码安装或参与开发，见 [本地安装步骤](docs/local-install.md)。
 
 ## 对账
 

@@ -7,7 +7,7 @@
 先安装 `dsh-tally`，再安装本插件，然后重启 dsh：
 
 ```sh
-dsh plugin --profile web add dsh-tally dsh-tally-ui
+dsh plugin --profile web add dsh-tally@beta dsh-tally-ui@beta
 ```
 
 浏览器端代码只在 dsh 启动时加载，所以安装或升级后需要重启 dsh。需要显示 DeepSeek 余额时，再安装 [`dsh-tally-balance-deepseek`](../balance-deepseek/README.md)。

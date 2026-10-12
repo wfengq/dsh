@@ -1,6 +1,6 @@
 {
   "name": "dsh-tally",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.0",
   "description": "dsh 的用量、计价、余额与预算共享数据层：按请求记账、预算提醒、浏览器 Remote API 和对账工具",
   "keywords": [
     "dsh",
@@ -81,6 +81,7 @@
     "@deepseek-ai/schemastery": "3.18.4"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "beta"
   }
 }

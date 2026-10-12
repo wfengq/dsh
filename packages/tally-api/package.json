@@ -1,6 +1,6 @@
 {
   "name": "dsh-tally-api",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.0",
   "description": "dsh-tally 的类型接口：用量、计价、余额、预算服务和事件，供其他 dsh 插件依赖",
   "keywords": [
     "dsh",
@@ -46,6 +46,7 @@
     "@deepseek-ai/cordis": "4.0.4"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "beta"
   }
 }

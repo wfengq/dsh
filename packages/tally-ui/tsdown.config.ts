@@ -5,7 +5,7 @@
  * (zod, `dsh-tally/remote`, this package's code and CSS) is inlined.
  */
 import { readFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname, relative, resolve } from 'node:path'
 import { defineConfig, type UserConfig } from 'tsdown'
 
 const ID = 'dsh-tally-ui'
@@ -27,6 +27,11 @@ const shared = new Set(SHARED_MODULES)
 // tsdown claims ids ending in `.css` for its own CSS pipeline, so the virtual id must not.
 const CSS_PREFIX = '\0dsh-tally-ui-css:'
 const CSS_SUFFIX = '.mjs'
+/**
+ * The virtual id names the stylesheet relative to the package, so the published bundle carries no
+ * path of the machine that built it; tsdown runs with the package as its working directory.
+ */
+const PACKAGE_ROOT = process.cwd()
 
 /** Turn a stylesheet into code that injects it once when the factory runs, tagged like dsh's own plugins. */
 function styleInjection(file: string, css: string): string {
@@ -73,11 +78,12 @@ const config: UserConfig = {
     name: 'dsh-tally-ui-css-inject',
     resolveId(source: string, importer: string | undefined) {
       if (!source.endsWith('.css')) return null
-      return CSS_PREFIX + (importer === undefined ? source : resolve(dirname(importer), source)) + CSS_SUFFIX
+      const file = importer === undefined ? resolve(source) : resolve(dirname(importer), source)
+      return CSS_PREFIX + relative(PACKAGE_ROOT, file).split('\\').join('/') + CSS_SUFFIX
     },
     async load(id: string) {
       if (!id.startsWith(CSS_PREFIX)) return null
-      const file = id.slice(CSS_PREFIX.length, -CSS_SUFFIX.length)
+      const file = resolve(PACKAGE_ROOT, id.slice(CSS_PREFIX.length, -CSS_SUFFIX.length))
       this.addWatchFile(file)
       return styleInjection(file, await readFile(file, 'utf8'))
     },
