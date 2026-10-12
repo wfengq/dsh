@@ -42,15 +42,25 @@ export function formatReport(
   extra = '',
 ): string {
   const out: string[] = []
-  const bad = r.rows.filter(x => !x.withinTolerance)
+  const compared = r.rows.filter(x => x.compared)
+  const early = r.rows.filter(x => !x.compared)
+  const bad = compared.filter(x => !x.withinTolerance)
   const head = bad.length === 0
-    ? `全部 ${r.rows.length} 行都在容差（${percent(r.tolerance)}）以内`
-    : `超出容差（${percent(r.tolerance)}）的行：${bad.length} / ${r.rows.length}`
+    ? `全部 ${compared.length} 行都在容差（${percent(r.tolerance)}）以内`
+    : `超出容差（${percent(r.tolerance)}）的行：${bad.length} / ${compared.length}`
   out.push(skipped.length > 0 ? `${head}；账单中另有 ${skipped.length} 行无法解析，未参与对账。` : `${head}。`)
   for (const x of bad) out.push(line(x))
+  if (early.length > 0) {
+    out.push('', `价格数据开始之前的 ${early.length} 行不参与比较（账本没有那时的价格）：`)
+    for (const x of early) {
+      const start = x.hints.find(h => h.startsWith('beforePrices:'))?.slice('beforePrices:'.length)
+      out.push(`  ${x.day}  ${x.model}  ${x.currency ?? '—'}  账单 ${x.bill ?? '—'}（价格数据从 ${start} 开始）`)
+    }
+  }
   out.push('', '汇总：')
   for (const t of r.totals) {
-    out.push(`  ${t.currency}  账本 ${t.ours}  账单 ${t.bill}  差额 ${t.diff}  超出容差 ${t.outOfTolerance} 行`)
+    const skippedBill = t.notCompared !== '0' ? `（另有未参与比较的账单 ${t.notCompared}）` : ''
+    out.push(`  ${t.currency}  账本 ${t.ours}  账单 ${t.bill}  差额 ${t.diff}  超出容差 ${t.outOfTolerance} 行${skippedBill}`)
   }
   const { unpricedCount, unknownUsageCount } = r.unexplained
   if (unpricedCount + unknownUsageCount > 0) {

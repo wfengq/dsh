@@ -9,7 +9,9 @@ import './reconcile/generic-csv.js'
 import { deepseekCost, loadDeepSeekExport, parseDeepSeekUsage, summarizeDeepSeek } from './reconcile/deepseek.js'
 import { isZip, readZip } from './reconcile/zip.js'
 import type { ProviderPriceOverride } from 'dsh-tally-api'
+import { loadCatalog } from 'dsh-pricing-data'
 import { compare } from './reconcile/compare.js'
+import { pricesFromByModel } from './reconcile/coverage.js'
 import { ledgerDaily } from './reconcile/ledger.js'
 import { formatDeepSeekSplit, formatReport } from './reconcile/report.js'
 
@@ -35,6 +37,7 @@ const USAGE = `用法：dsh-tally reconcile --bill <账单文件> [选项]
   --help                 显示本帮助
 
 退出码：0 全部在容差内；1 有超出容差的行，或账单中有无法解析的行；2 参数或文件错误。
+价格数据开始之前的账单行（账本没有那时的价格）单独列出，不参与比较，也不影响退出码。
 `
 
 class UsageError extends Error {}
@@ -169,7 +172,7 @@ function main(argv: string[]): number {
   const ledger = ledgerDaily({
     dbPath: values.db ?? dshHomePath('tally', 'tally.v1.sqlite'), from, to, tz: values.tz!, providerRoutes: routes, overrides,
   })
-  const report = compare(ledger, bill, values.tolerance)
+  const report = compare(ledger, bill, values.tolerance, { pricesFrom: pricesFromByModel(loadCatalog(), values.tz!) })
   const deepseek = parser === deepseekCost
     ? summarizeDeepSeek(bill, usageText === undefined ? undefined : parseDeepSeekUsage(usageText, { tz: values.tz! }).days.filter(d => d.day >= from && d.day <= to))
     : undefined
@@ -177,7 +180,7 @@ function main(argv: string[]): number {
     ? JSON.stringify({ ...report, skipped: parsed.skipped, routes, outOfRange, ...(deepseek ? { deepseek: { source, ...deepseek, notes } } : {}) }, null, 2) + '\n'
     : formatReport(report, parsed.skipped, routes, deepseek ? formatDeepSeekSplit(deepseek, source, notes) : '')
       + (outOfRange > 0 ? `（账单中另有 ${outOfRange} 行不在对账日期范围内，未参与对账。）\n` : ''))
-  return report.rows.every(r => r.withinTolerance) && parsed.skipped.length === 0 ? 0 : 1
+  return report.rows.every(r => !r.compared || r.withinTolerance) && parsed.skipped.length === 0 ? 0 : 1
 }
 
 try {
