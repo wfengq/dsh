@@ -10,6 +10,8 @@ export interface BillRow {
   currency: Currency
   /** 1-based source line (the header is line 1). */
   line: number
+  /** Wallet the amount was charged to, when the bill says (DeepSeek: `Paid` or `Granted`). */
+  wallet?: string
 }
 
 export interface BillParseResult {
@@ -23,6 +25,8 @@ export interface BillParserOptions {
   columns?: Partial<Record<BillColumn, string>>
   currency?: Currency
   modelMap?: Record<string, string>
+  /** IANA zone that turns bill timestamps into days; the reconcile command passes its `--tz`. */
+  tz?: string
 }
 
 export interface BillParser {
@@ -30,6 +34,8 @@ export interface BillParser {
   describe: string
   detect(text: string): boolean
   parse(text: string, options: BillParserOptions): BillParseResult
+  /** When set, a file this parser detects is not a bill: picking it fails with this message. */
+  refuse?: string
 }
 
 const registry: BillParser[] = []
@@ -52,5 +58,6 @@ export function pickBillParser(text: string, id?: string): BillParser {
   }
   const hit = registry.find(q => q.detect(text))
   if (!hit) throw new Error('无法识别账单格式，请用 --format 指定')
+  if (hit.refuse !== undefined) throw new Error(hit.refuse)
   return hit
 }

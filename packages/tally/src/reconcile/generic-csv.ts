@@ -2,6 +2,7 @@ import { formatFixed, parseAmount } from 'dsh-pricing-data'
 import type { Currency } from 'dsh-tally-api'
 import { registerBillParser, type BillColumn, type BillParser, type BillParseResult } from './bill.js'
 import { parseCsvRecords } from './csv-read.js'
+import { isDeepSeekUsageTable, USAGE_TABLE_MESSAGE } from './deepseek.js'
 
 const ALIASES: Record<BillColumn, string[]> = {
   day: ['日期', 'date', 'day', '账单日期'],
@@ -49,6 +50,8 @@ export const genericCsv: BillParser = {
   describe: '通用 CSV：按列名识别日期、模型、金额、币种，可用 --column 指定列名',
   detect: () => false,
   parse(text, options): BillParseResult {
+    // Its `amount` column counts tokens and requests; read as money it would bill quantities.
+    if (isDeepSeekUsageTable(text)) throw new Error(USAGE_TABLE_MESSAGE)
     const [header, ...body] = parseCsvRecords(text)
     const names = (header?.fields ?? []).map(h => h.trim().toLowerCase())
     const index = (col: BillColumn): number => {

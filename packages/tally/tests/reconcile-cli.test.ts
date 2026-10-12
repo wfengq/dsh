@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { TallyStore } from '../src/store.js'
+import { makeZip } from './support/zip.js'
+import { readFileSync } from 'node:fs'
 
 const require = createRequire(import.meta.url)
 const cli = fileURLToPath(new URL('../lib/cli.js', import.meta.url))
@@ -140,5 +142,66 @@ describe('dsh-tally reconcile', () => {
     rmSync(ro, { recursive: true, force: true })
     rmSync(bill, { force: true })
     expect(r.status, r.stderr).toBe(0)
+  })
+})
+
+describe('dsh-tally reconcile with DeepSeek exports', () => {
+  const fixture = (name: string) => readFileSync(new URL(`./fixtures/deepseek-export/${name}`, import.meta.url), 'utf8')
+  const COST = fixture('cost-2000-01-01_2000-01-02.csv')
+  const USAGE = fixture('amount-2000-01-01_2000-01-02.csv')
+  const zipOf = (files: { name: string; data: string }[]) => {
+    const path = join(dir, 'export.zip')
+    writeFileSync(path, makeZip(files.map(f => ({ ...f, deflate: true }))))
+    return path
+  }
+
+  it('reads the official ZIP: the cost table once, Paid and Granted apart, request counts from the usage table, no account or key data', () => {
+    const bill = zipOf([{ name: 'amount-2000-01-01_2000-01-02.csv', data: USAGE }, { name: 'cost-2000-01-01_2000-01-02.csv', data: COST }])
+    const r = run('reconcile', '--bill', bill, '--db', db)
+    expect(r.status).toBe(1) // the empty ledger has nothing for 2000: every line is out of tolerance
+    expect(r.stdout).toContain('账单 0.84')
+    expect(r.stdout).toContain('CNY  账本 0  账单 0.877')
+    expect(r.stdout).toContain('Paid（充值余额）0.537')
+    expect(r.stdout).toContain('Granted（赠金）0.34')
+    expect(r.stdout).toContain('请求 16 次')
+    expect(r.stdout).toContain('cost-2000-01-01_2000-01-02.csv')
+    expect(r.stdout + r.stderr).not.toMatch(/DEMO_USER_NOT_REAL|DEMO_NOT_A_REAL_API_KEY|client-A|client-B/)
+  })
+
+  it('reads the cost CSV on its own and reports the split in JSON', () => {
+    const bill = join(dir, 'cost.csv')
+    writeFileSync(bill, COST)
+    const r = run('reconcile', '--bill', bill, '--db', db, '--json')
+    const out = JSON.parse(r.stdout) as { totals: { bill: string }[]; deepseek: { totals: { paid: string; granted: string; total: string; requestCount: number | null }[] } }
+    expect(out.totals[0]!.bill).toBe('0.877')
+    expect(out.deepseek.totals).toEqual([{ currency: 'CNY', paid: '0.537', granted: '0.34', total: '0.877', requestCount: null }])
+    expect(r.stdout).not.toContain('DEMO_USER_NOT_REAL')
+  })
+
+  it('refuses the usage table as a bill, also with --format csv', () => {
+    const bill = join(dir, 'amount.csv')
+    writeFileSync(bill, USAGE)
+    for (const extra of [[], ['--format', 'csv', '--currency', 'CNY']]) {
+      const r = run('reconcile', '--bill', bill, '--db', db, ...extra)
+      expect(r.status).toBe(2)
+      expect(r.stderr).toContain('用量表')
+    }
+  })
+
+  it('names the problem with a ZIP that has no cost table or several', () => {
+    let r = run('reconcile', '--bill', zipOf([{ name: 'amount.csv', data: USAGE }]), '--db', db)
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('没有费用表')
+    r = run('reconcile', '--bill', zipOf([{ name: 'cost-a.csv', data: COST }, { name: 'cost-b.csv', data: COST }]), '--db', db)
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('多份费用表')
+  })
+
+  it('keys days in --tz', () => {
+    const bill = join(dir, 'cost.csv')
+    writeFileSync(bill, COST)
+    const r = run('reconcile', '--bill', bill, '--db', db, '--tz', 'UTC', '--json')
+    const out = JSON.parse(r.stdout) as { deepseek: { daily: { day: string }[] } }
+    expect(out.deepseek.daily.map(d => d.day)).toEqual(['1999-12-31', '2000-01-01'])
   })
 })

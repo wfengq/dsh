@@ -1,5 +1,6 @@
 import type { BillParseResult } from './bill.js'
 import type { ReconcileReport, ReconcileRow } from './compare.js'
+import type { DeepSeekDaily, DeepSeekTotal } from './deepseek.js'
 
 const HINTS: Record<string, string> = {
   unpriced: '未定价请求',
@@ -37,6 +38,8 @@ export function formatReport(
   r: ReconcileReport,
   skipped: BillParseResult['skipped'] = [],
   routes: Record<string, string> = {},
+  /** Extra sections (such as the DeepSeek wallet split), printed before the closing disclaimer. */
+  extra = '',
 ): string {
   const out: string[] = []
   const bad = r.rows.filter(x => !x.withinTolerance)
@@ -59,6 +62,33 @@ export function formatReport(
     out.push('', `账单中有 ${skipped.length} 行无法解析，未参与对账：`)
     for (const s of skipped) out.push(`  第 ${s.line} 行：${s.reason}`)
   }
+  if (extra !== '') out.push(extra.replace(/\n$/, ''))
   out.push('', '估算值，以账单为准。')
   return out.join('\n') + '\n'
+}
+
+function walletText(d: { paid: string; granted: string; total: string; requestCount: number | null }, others: string): string {
+  const requests = d.requestCount === null ? '' : `  请求 ${d.requestCount} 次`
+  return `Paid（充值余额）${d.paid}  Granted（赠金）${d.granted}${others}  合计 ${d.total}${requests}`
+}
+
+/**
+ * The DeepSeek bill split by wallet: what came out of the top-up balance (Paid) and what out of
+ * granted credit, per day and in total. The comparison above uses the total of every wallet.
+ */
+export function formatDeepSeekSplit(
+  summary: { daily: DeepSeekDaily[]; totals: DeepSeekTotal[] },
+  source: string,
+  notes: readonly string[] = [],
+): string {
+  const out = [`DeepSeek 账单按钱包拆分（来自 ${source}）：`]
+  for (const d of summary.daily) {
+    const others = Object.entries(d.wallets).filter(([w]) => w !== 'Paid' && w !== 'Granted').map(([w, v]) => `  ${w} ${v}`).join('')
+    out.push(`  ${d.day}  ${d.model}  ${d.currency}  ${walletText(d, others)}`)
+  }
+  for (const t of summary.totals) out.push(`  合计 ${t.currency}  ${walletText(t, '')}`)
+  out.push('  对账比较的是各钱包之和；其中只有 Paid 是充值余额的扣费，不应把合计当作现金支出。')
+  if (summary.totals.some(t => t.requestCount !== null)) out.push('  请求次数来自用量表，只作参考，不另计费。')
+  for (const n of notes) out.push(`  注意：${n}`)
+  return '\n' + out.join('\n') + '\n'
 }

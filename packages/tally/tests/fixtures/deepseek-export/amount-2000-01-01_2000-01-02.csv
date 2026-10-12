@@ -1,0 +1,13 @@
+﻿user_id,start_time_iso,end_time_iso,model,api_key_name,api_key,type,price,amount
+DEMO_USER_NOT_REAL,2000-01-01T00:00:00+08:00,2000-01-02T00:00:00+08:00,deepseek-flash,"demo,client-A",DEMO_NOT_A_REAL_API_KEY_A,input_cache_miss_tokens,0.000003,100000
+DEMO_USER_NOT_REAL,2000-01-01T00:00:00+08:00,2000-01-02T00:00:00+08:00,deepseek-flash,"demo,client-A",DEMO_NOT_A_REAL_API_KEY_A,input_cache_hit_tokens,0.0000001,200000
+DEMO_USER_NOT_REAL,2000-01-01T00:00:00+08:00,2000-01-02T00:00:00+08:00,deepseek-flash,"demo,client-A",DEMO_NOT_A_REAL_API_KEY_A,output_tokens,0.000006,50000
+DEMO_USER_NOT_REAL,2000-01-01T00:00:00+08:00,2000-01-02T00:00:00+08:00,deepseek-flash,"demo,client-A",DEMO_NOT_A_REAL_API_KEY_A,request_count,,10
+DEMO_USER_NOT_REAL,2000-01-01T00:00:00+08:00,2000-01-02T00:00:00+08:00,deepseek-flash,demo-client-B,DEMO_NOT_A_REAL_API_KEY_B,input_cache_miss_tokens,0.000003,50000
+DEMO_USER_NOT_REAL,2000-01-01T00:00:00+08:00,2000-01-02T00:00:00+08:00,deepseek-flash,demo-client-B,DEMO_NOT_A_REAL_API_KEY_B,input_cache_hit_tokens,0.0000001,100000
+DEMO_USER_NOT_REAL,2000-01-01T00:00:00+08:00,2000-01-02T00:00:00+08:00,deepseek-flash,demo-client-B,DEMO_NOT_A_REAL_API_KEY_B,output_tokens,0.000006,10000
+DEMO_USER_NOT_REAL,2000-01-01T00:00:00+08:00,2000-01-02T00:00:00+08:00,deepseek-flash,demo-client-B,DEMO_NOT_A_REAL_API_KEY_B,request_count,,4
+DEMO_USER_NOT_REAL,2000-01-02T00:00:00+08:00,2000-01-03T00:00:00+08:00,deepseek-flash,"demo,client-A",DEMO_NOT_A_REAL_API_KEY_A,input_cache_miss_tokens,0.000003,10000
+DEMO_USER_NOT_REAL,2000-01-02T00:00:00+08:00,2000-01-03T00:00:00+08:00,deepseek-flash,"demo,client-A",DEMO_NOT_A_REAL_API_KEY_A,input_cache_hit_tokens,0.0000001,10000
+DEMO_USER_NOT_REAL,2000-01-02T00:00:00+08:00,2000-01-03T00:00:00+08:00,deepseek-flash,"demo,client-A",DEMO_NOT_A_REAL_API_KEY_A,output_tokens,0.000006,1000
+DEMO_USER_NOT_REAL,2000-01-02T00:00:00+08:00,2000-01-03T00:00:00+08:00,deepseek-flash,"demo,client-A",DEMO_NOT_A_REAL_API_KEY_A,request_count,,2
