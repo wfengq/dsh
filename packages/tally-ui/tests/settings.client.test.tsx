@@ -55,6 +55,8 @@ function mount(options: {
   setBudget?: (b: Budget) => Promise<unknown>
   status?: TallyStatusView | null
   spend?: Record<string, Money>
+  /** Leave the advanced group collapsed instead of opening it after the first render. */
+  collapsed?: boolean
 } = {}) {
   const overrides = fakeForm(options.overrides)
   const elements = fakeForm({ value: { elements: {} }, ...options.elements })
@@ -71,6 +73,7 @@ function mount(options: {
   }
   const props = { remote, overridesForm: overrides, elementsForm: elements, status, generation, budgetSpend, close: () => {}, t } as unknown as SectionProps
   const view = render(<Section {...props} />)
+  if (options.collapsed !== true) fireEvent.click(screen.getByRole('button', { name: zh['settings.advanced'] }))
   return { overrides, elements, status, generation, remote, ...view }
 }
 
@@ -83,14 +86,23 @@ describe('dictionaries', () => {
 })
 
 describe('catalog info', () => {
-  it('shows the data version, per-model price version, effective date, source link and the disclaimer', async () => {
+  it('shows the data version, each model with its effective date and source, the price version only as a tooltip', async () => {
     mount()
     expect(await screen.findByText(t('settings.catalogVersion', { version: '2026-10-01' }))).toBeTruthy()
-    expect(screen.getByText('deepseek-chat')).toBeTruthy()
-    expect(screen.getByText('v7')).toBeTruthy()
-    expect(screen.getByText('2026-09-01')).toBeTruthy()
-    expect(screen.getByRole('link').getAttribute('href')).toBe('https://example.test/pricing')
+    const row = screen.getByText('deepseek-chat').closest('[data-tally="catalog-row"]') as HTMLElement
+    expect(within(row).getByText(t('settings.effectiveOn', { date: '2026-09-01' }))).toBeTruthy()
+    expect(within(row).getByRole('link').getAttribute('href')).toBe('https://example.test/pricing')
+    expect(screen.getByText(`${zh['settings.priceVersion']} v7`).closest('[data-tooltip]')).not.toBeNull()
     expect(screen.getByText(zh.disclaimer)).toBeTruthy()
+  })
+})
+
+describe('advanced group', () => {
+  it('is collapsed by default and shows the catalog once opened', async () => {
+    mount({ collapsed: true })
+    expect(screen.queryByText('deepseek-chat')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['settings.advanced'] }))
+    expect(await screen.findByText('deepseek-chat')).toBeTruthy()
   })
 })
 
@@ -103,25 +115,43 @@ describe('catalog source links', () => {
     }))
     cleanup()
     render(<Section {...({ remote: mounted.remote, overridesForm: mounted.overrides, elementsForm: mounted.elements, status: mounted.status, generation: mounted.generation, budgetSpend: observable({}), close: () => {}, t } as unknown as SectionProps)} />)
+    fireEvent.click(screen.getByRole('button', { name: zh['settings.advanced'] }))
     await screen.findByText('deepseek-chat')
     expect(screen.queryByRole('link')).toBeNull()
   })
 })
 
-describe('overrides editor', () => {
-  async function openManual(view: ReturnType<typeof mount>) {
-    fireEvent.click(await screen.findByRole('tab', { name: label('settings.override.manual') }))
-    fireEvent.change(screen.getByLabelText(label('settings.override.route')), { target: { value: 'my-proxy' } })
-    fireEvent.change(screen.getByLabelText(label('settings.override.model')), { target: { value: 'm1' } })
-    fireEvent.change(screen.getByLabelText(label('settings.override.rateOutput')), { target: { value: '2' } })
-    return view
+describe('overrides card', () => {
+  const routes = (list: string[]) => ({ ...statusView(null), routes: list })
+
+  async function openDialog() {
+    fireEvent.click(await screen.findByRole('button', { name: label('settings.override.add') }))
+    return screen.getByRole('dialog', { name: label('settings.override.add') })
+  }
+  async function pick(dialog: HTMLElement, anchor: string, item: string) {
+    fireEvent.click(within(dialog).getByRole('button', { name: anchor }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: item }))
+  }
+  async function openManual() {
+    const dialog = await openDialog()
+    fireEvent.click(within(dialog).getByRole('tab', { name: label('settings.override.manual') }))
+    await pick(dialog, label('settings.override.pickRoute'), 'my-proxy')
+    fireEvent.change(within(dialog).getByLabelText(label('settings.override.model')), { target: { value: 'm1' } })
+    fireEvent.change(within(dialog).getByLabelText(label('settings.override.rateOutput')), { target: { value: '2' } })
+    return dialog
   }
 
+  it('explains its purpose in the dialog', async () => {
+    mount({ status: routes(['my-proxy']) })
+    const dialog = await openDialog()
+    expect(within(dialog).getByText(label('settings.override.purpose'))).toBeTruthy()
+  })
+
   it('enables save only for a plain decimal rate and writes the override', async () => {
-    const view = mount()
-    await openManual(view)
-    const rate = screen.getByLabelText(label('settings.override.rateInput'))
-    const save = screen.getByRole('button', { name: label('settings.save') }) as HTMLButtonElement
+    const view = mount({ status: routes(['deepseek', 'my-proxy']) })
+    const dialog = await openManual()
+    const rate = within(dialog).getByLabelText(label('settings.override.rateInput'))
+    const save = within(dialog).getByRole('button', { name: label('settings.save') }) as HTMLButtonElement
     fireEvent.change(rate, { target: { value: '1.5e-3' } })
     expect(save.disabled).toBe(true)
     fireEvent.change(rate, { target: { value: '0.0015' } })
@@ -131,34 +161,44 @@ describe('overrides editor', () => {
     expect(view.overrides.mutate).toHaveBeenCalledWith(setOp(['overrides'], [
       { provider: 'my-proxy', kind: 'manual', currency: 'CNY', models: { m1: { input: '0.0015', output: '2' } } },
     ]))
+    await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull() })
   })
 
   it('rejects more than twelve fraction digits', async () => {
-    const view = mount()
-    await openManual(view)
-    fireEvent.change(screen.getByLabelText(label('settings.override.rateInput')), { target: { value: '0.1234567890123' } })
-    expect((screen.getByRole('button', { name: label('settings.save') }) as HTMLButtonElement).disabled).toBe(true)
+    mount({ status: routes(['my-proxy']) })
+    const dialog = await openManual()
+    fireEvent.change(within(dialog).getByLabelText(label('settings.override.rateInput')), { target: { value: '0.1234567890123' } })
+    expect((within(dialog).getByRole('button', { name: label('settings.save') }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('adds an alias override next to the existing ones and removes one', async () => {
+  it('maps a status route to a catalog model and removes an override from its ⋯ menu', async () => {
     const existing = { provider: 'old', kind: 'alias', target: { provider: 'deepseek' } }
-    const view = mount({ overrides: { value: { overrides: [existing] } } })
-    fireEvent.change(await screen.findByLabelText(label('settings.override.route')), { target: { value: 'proxy' } })
-    fireEvent.change(screen.getByLabelText(label('settings.override.targetProvider')), { target: { value: 'deepseek' } })
-    fireEvent.change(screen.getByLabelText(label('settings.override.targetModel')), { target: { value: 'deepseek-chat' } })
-    fireEvent.click(screen.getByRole('button', { name: label('settings.save') }))
+    const view = mount({ status: routes(['deepseek', 'my-proxy']), overrides: { value: { overrides: [existing] } } })
+    const dialog = await openDialog()
+    await pick(dialog, label('settings.override.pickRoute'), 'my-proxy')
+    await pick(dialog, label('settings.override.pickProvider'), 'deepseek')
+    await pick(dialog, label('settings.override.anyModel'), 'deepseek-chat')
+    fireEvent.click(within(dialog).getByRole('button', { name: label('settings.save') }))
     await waitFor(() => { expect(view.overrides.mutate).toHaveBeenCalledTimes(1) })
-    expect(view.overrides.mutate).toHaveBeenCalledWith(setOp(['overrides'], [existing, { provider: 'proxy', kind: 'alias', target: { provider: 'deepseek', model: 'deepseek-chat' } }]))
-    fireEvent.click(screen.getAllByRole('button', { name: label('settings.remove') })[0]!)
+    expect(view.overrides.mutate).toHaveBeenCalledWith(setOp(['overrides'], [existing, { provider: 'my-proxy', kind: 'alias', target: { provider: 'deepseek', model: 'deepseek-chat' } }]))
+    const row = screen.getByText(t('settings.override.aliasSummary', { route: 'old', target: 'deepseek' })).closest('[data-tally="override-row"]') as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: label('settings.more') }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: label('settings.remove') }))
     await waitFor(() => { expect(view.overrides.mutate).toHaveBeenCalledTimes(2) })
     expect(view.overrides.mutate).toHaveBeenLastCalledWith(setOp(['overrides'], []))
+  })
+
+  it('says when there is no route to pick and keeps save disabled', async () => {
+    mount({ status: routes([]) })
+    const dialog = await openDialog()
+    expect(within(dialog).getByText(label('settings.override.noRoutes'))).toBeTruthy()
+    expect((within(dialog).getByRole('button', { name: label('settings.save') }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('is read-only in memory mode and says why', async () => {
     const view = mount({ overrides: { mode: 'memory', writable: false } })
     expect(await screen.findByText(label('settings.readonly.memory'))).toBeTruthy()
-    expect((screen.getByLabelText(label('settings.override.route')) as HTMLInputElement).disabled).toBe(true)
-    expect((screen.getByRole('button', { name: label('settings.save') }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: label('settings.override.add') }) as HTMLButtonElement).disabled).toBe(true)
     expect(view.overrides.mutate).not.toHaveBeenCalled()
   })
 
@@ -170,13 +210,13 @@ describe('overrides editor', () => {
     expect(await screen.findByText(label('settings.readonly.notWritable'))).toBeTruthy()
   })
 
-  it('reports a refused write', async () => {
-    const view = mount()
-    await openManual(view)
-    fireEvent.change(screen.getByLabelText(label('settings.override.rateInput')), { target: { value: '1' } })
+  it('reports a refused write and keeps the dialog open', async () => {
+    const view = mount({ status: routes(['my-proxy']) })
+    const dialog = await openManual()
+    fireEvent.change(within(dialog).getByLabelText(label('settings.override.rateInput')), { target: { value: '1' } })
     view.overrides.mutate.mockResolvedValueOnce(false)
-    fireEvent.click(screen.getByRole('button', { name: label('settings.save') }))
-    expect(await screen.findByText(label('settings.saveFailed'))).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: label('settings.save') }))
+    expect(await within(dialog).findByText(label('settings.saveFailed'))).toBeTruthy()
   })
 })
 
@@ -389,7 +429,17 @@ describe('problems', () => {
     expect(document.querySelector('[data-tally="problems"]')).toBeNull()
   })
 
-  it('lists session, ledger, pricing and budget problems, with a rebuild hint for ledger errors', async () => {
+  it('merges unreadable sessions into one line that expands to the list', async () => {
+    const errors = Array.from({ length: 6 }, (_, i) => ({ sessionId: `s-${i}`, message: `bad ${i}` }))
+    mount({ status: withProblems({}, errors) })
+    const line = screen.getByRole('button', { name: t('settings.problem.sessions', { count: 6 }) })
+    expect(screen.queryByText(/s-3/)).toBeNull()
+    fireEvent.click(line)
+    expect(screen.getByText(/s-3/).textContent).toContain('bad 3')
+    expect(document.querySelectorAll('[data-tally="problem"]')).toHaveLength(1)
+  })
+
+  it('keeps ledger, pricing and budget problems on their own lines, with a rebuild hint for ledger errors', async () => {
     mount({
       status: withProblems(
         { pricingErrors: ['override for "acme" ignored'], budgetErrors: ['budget file: unsupported budget file format'] },
@@ -398,7 +448,7 @@ describe('problems', () => {
     })
     const items = [...document.querySelectorAll('[data-tally="problem"]')].map(n => n.textContent)
     expect(items).toEqual([
-      t('settings.problem.item', { source: t('settings.problem.session', { session: 's-9' }), message: 'unsupported log version' }),
+      t('settings.problem.sessions', { count: 1 }),
       t('settings.problem.item', { source: zh['settings.problem.usage'], message: 'database disk image is malformed' }),
       t('settings.problem.item', { source: zh['settings.problem.pricing'], message: 'override for "acme" ignored' }),
       t('settings.problem.item', { source: zh['settings.problem.budget'], message: 'budget file: unsupported budget file format' }),

@@ -1,4 +1,5 @@
-import { useCallback, type ReactNode } from 'react'
+import { DisclosureRow } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useCallback, useState, type ReactNode } from 'react'
 import type { CatalogView, Money, TallyStatusView } from 'dsh-tally-api'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { T } from '../labels.ts'
@@ -35,6 +36,7 @@ export type SectionProps = SectionInjected & { close: () => void; t: T }
 /** Usage and cost page of the settings panel. */
 export function Section({ remote, overridesForm, elementsForm, status, generation, budgetSpend, t }: SectionProps): ReactNode {
   const hello = useSnapshot(generation)
+  const [advanced, setAdvanced] = useState(false)
   // A new `hello` gives a new loader, which CatalogInfo and BudgetsCard key their loads on.
   const load = useCallback(async () => {
     const result = await remote.catalog()
@@ -45,9 +47,23 @@ export function Section({ remote, overridesForm, elementsForm, status, generatio
       <BudgetsCard remote={remote} generation={hello} budgetSpend={budgetSpend} t={t} />
       <ElementSwitches form={elementsForm} t={t} />
       <Problems status={status} t={t} />
-      <CatalogInfo load={load} t={t} />
-      <OverridesEditor form={overridesForm} t={t} />
-      <RebuildButton rebuild={() => remote.rebuild()} status={status} t={t} />
+      <div className="dsh-tally-advanced" data-tally="advanced">
+        <DisclosureRow
+          icon={null}
+          title={t('settings.advanced')}
+          open={advanced}
+          expandable
+          expandOnRowClick
+          onToggle={() => { setAdvanced(o => !o) }}
+          className="dsh-tally-disclosure"
+        >
+          <div className="dsh-tally-advanced-body">
+            <CatalogInfo load={load} t={t} />
+            <OverridesEditor form={overridesForm} status={status} loadCatalog={load} t={t} />
+            <RebuildButton rebuild={() => remote.rebuild()} status={status} t={t} />
+          </div>
+        </DisclosureRow>
+      </div>
     </div>
   )
 }

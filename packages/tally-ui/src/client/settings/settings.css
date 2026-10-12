@@ -231,3 +231,30 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+.dsh-tally-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-top: 12px;
+}
+
+.dsh-tally-problem {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.dsh-tally-row-warn { color: var(--dsw-alias-state-warn-primary); }
+
+.dsh-tally-problem-list {
+  margin: 4px 0 0;
+  padding: 0 0 0 16px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.dsh-tally-model-name { outline-offset: 2px; }
+.dsh-tally-block { display: block; }

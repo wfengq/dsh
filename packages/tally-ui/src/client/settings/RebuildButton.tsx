@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { TallyStatusView } from 'dsh-tally-api'
 import type { T } from '../labels.ts'
+import { SettingsCard, SettingsRow } from './Card.tsx'
 import { useSnapshot } from './form.ts'
 import type { Snapshot } from '../store.ts'
 
@@ -42,11 +43,14 @@ export function RebuildButton({ rebuild, status, t }: { rebuild: () => Promise<R
     }
   }
   return (
-    <section className="dsh-tally-settings-part" data-tally="rebuild">
-      <h3>{t('settings.rebuild')}</h3>
-      <Button variant="outline" size="sm" disabled={calling || backfill !== null || phase !== 'idle'} onClick={() => { setConfirming(true) }}>{t('settings.rebuildAction')}</Button>
-      {backfill !== null ? <p className="dsh-tally-hint" role="status">{t('settings.rebuildProgress', { done: backfill.done, total: backfill.total })}</p> : null}
-      {failed ? <p className="dsh-tally-error" role="alert">{t('settings.rebuildFailed')}</p> : null}
+    <SettingsCard title={t('settings.rebuild')} tally="rebuild">
+      <SettingsRow
+        label={t('settings.rebuild.hint')}
+        hint={backfill !== null
+          ? <span role="status">{t('settings.rebuildProgress', { done: backfill.done, total: backfill.total })}</span>
+          : failed ? <span className="dsh-tally-error" role="alert">{t('settings.rebuildFailed')}</span> : undefined}
+        control={<Button variant="outline" size="sm" disabled={calling || backfill !== null || phase !== 'idle'} onClick={() => { setConfirming(true) }}>{t('settings.rebuildAction')}</Button>}
+      />
       <Modal
         open={confirming}
         onClose={() => { setConfirming(false) }}
@@ -60,6 +64,6 @@ export function RebuildButton({ rebuild, status, t }: { rebuild: () => Promise<R
           </div>
         )}
       />
-    </section>
+    </SettingsCard>
   )
 }
