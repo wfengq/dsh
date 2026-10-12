@@ -58,7 +58,7 @@ describe('dsh-tally reconcile', () => {
     const r = run('reconcile', '--bill', writeBill('2026-10-14,deepseek-flash,2,CNY\n'), '--format', 'csv', '--db', db, '--json')
     expect(r.status).toBe(0)
     const report = JSON.parse(r.stdout)
-    expect(report.totals).toEqual([{ currency: 'CNY', ours: '2', bill: '2', diff: '0', outOfTolerance: 0 }])
+    expect(report.totals).toEqual([{ currency: 'CNY', ours: '2', bill: '2', diff: '0', outOfTolerance: 0, notCompared: '0' }])
   })
 
   it('exits 2 and names the file when the bill is missing', () => {
@@ -158,9 +158,11 @@ describe('dsh-tally reconcile with DeepSeek exports', () => {
   it('reads the official ZIP: the cost table once, Paid and Granted apart, request counts from the usage table, no account or key data', () => {
     const bill = zipOf([{ name: 'amount-2000-01-01_2000-01-02.csv', data: USAGE }, { name: 'cost-2000-01-01_2000-01-02.csv', data: COST }])
     const r = run('reconcile', '--bill', bill, '--db', db)
-    expect(r.status).toBe(1) // the empty ledger has nothing for 2000: every line is out of tolerance
-    expect(r.stdout).toContain('账单 0.84')
-    expect(r.stdout).toContain('CNY  账本 0  账单 0.877')
+    // 2000 is before any price data: the lines are listed apart, not compared, and do not fail the run.
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('价格数据开始之前的 2 行不参与比较')
+    expect(r.stdout).toContain('账单 0.84（价格数据从 2026-10-10 开始）')
+    expect(r.stdout).toContain('另有未参与比较的账单 0.877')
     expect(r.stdout).toContain('Paid（充值余额）0.537')
     expect(r.stdout).toContain('Granted（赠金）0.34')
     expect(r.stdout).toContain('请求 16 次')
@@ -172,8 +174,8 @@ describe('dsh-tally reconcile with DeepSeek exports', () => {
     const bill = join(dir, 'cost.csv')
     writeFileSync(bill, COST)
     const r = run('reconcile', '--bill', bill, '--db', db, '--json')
-    const out = JSON.parse(r.stdout) as { totals: { bill: string }[]; deepseek: { totals: { paid: string; granted: string; total: string; requestCount: number | null }[] } }
-    expect(out.totals[0]!.bill).toBe('0.877')
+    const out = JSON.parse(r.stdout) as { totals: { bill: string; notCompared: string }[]; deepseek: { totals: { paid: string; granted: string; total: string; requestCount: number | null }[] } }
+    expect(out.totals[0]!.notCompared).toBe('0.877')
     expect(out.deepseek.totals).toEqual([{ currency: 'CNY', paid: '0.537', granted: '0.34', total: '0.877', requestCount: null }])
     expect(r.stdout).not.toContain('DEMO_USER_NOT_REAL')
   })

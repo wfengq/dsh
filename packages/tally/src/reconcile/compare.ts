@@ -15,6 +15,11 @@ export interface ReconcileRow {
   /** `|diff| / bill`, rounded half-up to 6 decimals; `null` when the bill side is 0 or missing. */
   diffRatio: string | null
   withinTolerance: boolean
+  /**
+   * `false` for a bill line dated before the model's price data starts and with nothing priced in the
+   * ledger: it cannot be compared, so it is left out of the totals and the verdict.
+   */
+  compared: boolean
   hints: string[]
 }
 
@@ -24,6 +29,8 @@ export interface ReconcileTotal {
   bill: string
   diff: string
   outOfTolerance: number
+  /** Bill amount of the lines left out of the comparison (before the price data starts). */
+  notCompared: string
 }
 
 export interface ReconcileReport {
@@ -50,7 +57,12 @@ function formatMicro(micro: bigint): string {
 }
 
 /** Join the ledger and the bill on (day, model, currency) and grade each line against `tolerance`. */
-export function compare(ledger: LedgerDay[], bill: BillRow[], tolerance = '0.01'): ReconcileReport {
+export interface CompareOptions {
+  /** First day (`YYYY-MM-DD`) with price data, by model name; see `pricesFromByModel`. */
+  pricesFrom?: Readonly<Record<string, string>>
+}
+
+export function compare(ledger: LedgerDay[], bill: BillRow[], tolerance = '0.01', options: CompareOptions = {}): ReconcileReport {
   const toleranceUnits = unitsOf(tolerance)
   const key = (day: string, model: string, currency: Currency) => `${day}\u0000${model}\u0000${currency}`
   const billSums = new Map<string, { day: string; model: string; currency: Currency; units: bigint }>()
@@ -84,8 +96,13 @@ export function compare(ledger: LedgerDay[], bill: BillRow[], tolerance = '0.01'
     const diff = oursUnits - billUnits
     const ratio = b && billUnits > 0n ? ratioMicro(diff, billUnits) : null
     const hints = hintsFor(day, model)
-    if (!b) hints.push('missingInBill')
-    if (!l) hints.push('missingInLedger')
+    const start = options.pricesFrom?.[model]
+    const beforePrices = !l && b !== undefined && start !== undefined && day < start
+    if (beforePrices) hints.push(`beforePrices:${start}`)
+    else {
+      if (!b) hints.push('missingInBill')
+      if (!l) hints.push('missingInLedger')
+    }
     rows.push({
       day, model, currency,
       ours: l ? l.amount : null,
@@ -94,6 +111,7 @@ export function compare(ledger: LedgerDay[], bill: BillRow[], tolerance = '0.01'
       diffRatio: ratio === null ? null : formatMicro(ratio),
       // Graded on the exact ratio |diff| / bill <= tolerance; diffRatio is only the rounded display.
       withinTolerance: !!l && !!b && (billUnits > 0n ? abs(diff) * SCALE <= toleranceUnits * billUnits : diff === 0n),
+      compared: !beforePrices,
       hints,
     })
   }
@@ -103,16 +121,20 @@ export function compare(ledger: LedgerDay[], bill: BillRow[], tolerance = '0.01'
     if (rows.some(r => r.currency === null && r.day === l.day && r.model === l.model)) continue
     rows.push({
       day: l.day, model: l.model, currency: null, ours: null, bill: null, diff: '0', diffRatio: null,
-      withinTolerance: false, hints: [...hintsFor(l.day, l.model), 'missingInBill'],
+      withinTolerance: false, compared: true, hints: [...hintsFor(l.day, l.model), 'missingInBill'],
     })
   }
   rows.sort((a, b) => (a.day + a.model < b.day + b.model ? -1 : a.day + a.model > b.day + b.model ? 1 : 0))
 
-  const totals = new Map<Currency, { ours: bigint; bill: bigint; out: number }>()
+  const totals = new Map<Currency, { ours: bigint; bill: bigint; out: number; notCompared: bigint }>()
   for (const r of rows) {
     if (r.currency === null) continue
     let t = totals.get(r.currency)
-    if (!t) totals.set(r.currency, t = { ours: 0n, bill: 0n, out: 0 })
+    if (!t) totals.set(r.currency, t = { ours: 0n, bill: 0n, out: 0, notCompared: 0n })
+    if (!r.compared) {
+      t.notCompared += r.bill === null ? 0n : unitsOf(r.bill)
+      continue
+    }
     t.ours += r.ours === null ? 0n : unitsOf(r.ours)
     t.bill += r.bill === null ? 0n : unitsOf(r.bill)
     if (!r.withinTolerance) t.out++
@@ -126,6 +148,7 @@ export function compare(ledger: LedgerDay[], bill: BillRow[], tolerance = '0.01'
     },
     totals: [...totals].sort(([a], [b]) => (a < b ? -1 : 1)).map(([currency, t]) => ({
       currency, ours: formatUnits(t.ours), bill: formatUnits(t.bill), diff: formatUnits(t.ours - t.bill), outOfTolerance: t.out,
+      notCompared: formatUnits(t.notCompared),
     })),
   }
 }
