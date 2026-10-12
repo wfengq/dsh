@@ -1,7 +1,7 @@
-import { MenuSurface, useAnchoredPosition, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { HoverCard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionView } from 'dsh-tally-api'
+import type { SessionView, UsageGroup } from 'dsh-tally-api'
 import type { Elements } from './elements.ts'
 import { costLabel, type T } from './labels.ts'
 import type { Snapshot } from './store.ts'
@@ -13,71 +13,85 @@ export interface SessionTotalInjected {
     elements: Snapshot<Elements>
     session: Snapshot<SessionView | null>
   }
+  sessionId: string
+  /** The session (subagents included) grouped by model; `null` when the call failed. */
+  loadModels: (sessionId: string) => Promise<UsageGroup[] | null>
+  openDashboard: (sessionId?: string) => void
 }
 
 export type SessionTotalProps = InjectFace<SessionTotalInjected> & { t: T }
 
+/** Per-model split of the session, read when the card opens. */
+function ModelSplit({ sessionId, loadModels, t }: { sessionId: string; loadModels: SessionTotalInjected['loadModels']; t: T }): ReactNode {
+  const [models, setModels] = useState<UsageGroup[] | null | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    loadModels(sessionId).then(next => { if (live) setModels(next) }, () => { if (live) setModels(null) })
+    return () => { live = false }
+  }, [sessionId, loadModels])
+  if (models === undefined) return <div className="dsh-tally-total-caption">{t('tab.loading')}</div>
+  if (models === null) return <div className="dsh-tally-total-caption">{t('tab.error')}</div>
+  return (
+    <>
+      {models.map(model => (
+        <div key={model.key} className="dsh-tally-total-row" data-tally="model-row">
+          <span className="dsh-tally-total-id">{model.key}</span>
+          <span className="dsh-tally-total-meta">{t('header.requests', { count: model.requestCount })}</span>
+          <span className="dsh-tally-num">{costLabel(model, t)}</span>
+        </div>
+      ))}
+    </>
+  )
+}
+
 /**
- * Session header total, subagents included. Clicking it opens a menu with one row per subagent
- * session. Shows `—` until the session has entries, never a zero.
+ * Session header total, subagents included. Hovering splits it by model and lists the subagent sessions;
+ * clicking opens the usage dashboard on this session. Shows `—` until the session has entries, never a zero.
  */
-export function SessionTotal({ useElements, useSession, t }: SessionTotalProps): ReactNode {
+export function SessionTotal({ useElements, useSession, sessionId, loadModels, openDashboard, t }: SessionTotalProps): ReactNode {
   const enabled = useElements((e: Elements) => e.headerUtilities)
   const session = useSession((s: SessionView | null) => s)
-  const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLSpanElement>(null)
-  const anchorRef = useRef<HTMLButtonElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-  const position = useAnchoredPosition({ open, anchorRef, panelRef, align: 'end', gap: 4, margin: 8 })
-  useDismissOnOutsidePointer(rootRef, open, setOpen)
-
-  useEffect(() => {
-    if (!open) return
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('keydown', onKey) }
-  }, [open])
-
   if (!enabled) return null
-  const total = session !== null && session.usage.total.requestCount > 0 ? costLabel(session.usage.total, t) : '—'
+  const hasEntries = session !== null && session.usage.total.requestCount > 0
+  const total = hasEntries ? costLabel(session.usage.total, t) : '—'
   const children = session?.usage.children ?? []
-  return (
-    <span className="dsh-tally-total" ref={rootRef}>
-      <button
-        ref={anchorRef}
-        type="button"
-        className="dsh-tally-total-button"
-        data-tally="total"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title={t('header.total')}
-        onClick={() => { setOpen(o => !o) }}
-      >
+  const button = (
+    <button
+      type="button"
+      className="dsh-tally-total-button"
+      data-tally="total"
+      aria-label={`${t('header.total')} ${total}`}
+      onClick={() => { openDashboard(sessionId) }}
+    >
+      <span className="dsh-tally-label">{t('dock.session')}</span>
+      <span className="dsh-tally-num">{total}</span>
+    </button>
+  )
+  const card = (
+    <div className="dsh-tally-total-card">
+      <div className="dsh-tally-total-head">
+        <span>{t('header.total')}</span>
         <span className="dsh-tally-num">{total}</span>
-      </button>
-      {open
+      </div>
+      {hasEntries ? <ModelSplit sessionId={sessionId} loadModels={loadModels} t={t} /> : null}
+      {children.length > 0
         ? (
-            <MenuSurface
-              ref={panelRef}
-              role="menu"
-              compact
-              className="dsh-tally-total-menu"
-              style={{ position: 'fixed', ...position, ...(position === null ? { visibility: 'hidden' } : {}) }}
-            >
-              <div className="dsh-tally-total-head">
-                <span>{t('header.total')}</span>
-                <span className="dsh-tally-num">{total}</span>
-              </div>
+            <>
               <div className="dsh-tally-total-caption">{t('header.subagents', { count: children.length })}</div>
               {children.map((child: SessionView['usage']['children'][number]) => (
-                <div key={child.sessionId} role="menuitem" className="dsh-tally-total-row" data-tally="subagent">
+                <div key={child.sessionId} className="dsh-tally-total-row" data-tally="subagent">
                   <span className="dsh-tally-total-id" title={child.sessionId}>{child.sessionId}</span>
                   <span className="dsh-tally-num">{costLabel(child.total, t)}</span>
                 </div>
               ))}
-            </MenuSurface>
+            </>
           )
         : null}
+    </div>
+  )
+  return (
+    <span className="dsh-tally-total">
+      <HoverCard anchor={button} content={card} />
     </span>
   )
 }

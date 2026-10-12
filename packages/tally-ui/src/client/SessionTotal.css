@@ -54,3 +54,20 @@
 .dsh-tally-num {
   font-variant-numeric: tabular-nums;
 }
+
+.dsh-tally-total-button { display: inline-flex; align-items: center; gap: 4px; }
+
+.dsh-tally-total-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dsh-tally-total-meta {
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}

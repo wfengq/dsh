@@ -3,6 +3,7 @@
  * its reconnecting `watch` stream and registers the conversation elements (composer cost dock,
  * per-turn cost, session header total and the budget toast).
  */
+import { makeOpenDashboard, type SidebarRightFace } from './open-dashboard.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -99,6 +100,12 @@ export async function apply(ctx: Context): Promise<void> {
     const loadTurn: TurnCostInjected['loadTurn'] = request => valueOf(remote.turn(request))
     const refreshBalance = (route: string) => store.refreshBalance(route)
     const dismissAlert: BudgetToastInjected['dismissAlert'] = alert => store.dismissAlert(alert)
+    const openDashboard = makeOpenDashboard(
+      () => scope.get('sidebarRight') as SidebarRightFace | undefined,
+      () => elements.getSnapshot().sidebarTab,
+    )
+    const loadModels: SessionTotalInjected['loadModels'] = sessionId =>
+      valueOf(remote.query({ from: 0, to: Date.now() + 1, groupBy: 'model', filter: { rootSessionId: sessionId } }))
 
     scope.slots.inject(DOCK, () => scope.slots.register({
       name: DOCK,
@@ -106,9 +113,19 @@ export async function apply(ctx: Context): Promise<void> {
       order: 0,
       locale: NS,
       inject: (sessionId: string): CostDockInjected => ({
-        hooks: { elements, session: store.session(sessionId), today: store.today, balances: store.balances, status: store.status },
+        hooks: {
+          elements,
+          session: store.session(sessionId),
+          today: store.today,
+          month: store.month,
+          budgets: store.budgets,
+          budgetSpend: store.budgetSpend,
+          balances: store.balances,
+          status: store.status,
+        },
         refreshBalance,
         band,
+        openDashboard,
       }),
     }, CostDock))
 
@@ -125,14 +142,14 @@ export async function apply(ctx: Context): Promise<void> {
       id: 'tally.total',
       order: -10,
       locale: NS,
-      inject: (sessionId: string): SessionTotalInjected => ({ hooks: { elements, session: store.session(sessionId) } }),
+      inject: (sessionId: string): SessionTotalInjected => ({ hooks: { elements, session: store.session(sessionId) }, sessionId, loadModels, openDashboard }),
     }, SessionTotal))
 
     scope.slots.inject(OVERLAY, () => scope.slots.register({
       name: OVERLAY,
       id: 'tally.budget',
       locale: NS,
-      inject: (): BudgetToastInjected => ({ hooks: { elements, alerts: store.alerts, budgets: store.budgets }, dismissAlert }),
+      inject: (): BudgetToastInjected => ({ hooks: { elements, alerts: store.alerts, budgets: store.budgets }, dismissAlert, openDashboard }),
     }, BudgetToast))
 
     scope.slots.inject(SETTINGS_SECTION, () => {

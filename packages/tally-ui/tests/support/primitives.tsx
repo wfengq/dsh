@@ -35,10 +35,11 @@ export function HoverCard({ anchor, content }: { anchor: ReactNode; content: Rea
 }
 
 /** Shows its text; the "fade done" button stands for the real banner finishing its fade. */
-export function Toast({ text, onDone }: { text: string; onDone: () => void; holdMs?: number }) {
+export function Toast({ text, onDone, actions }: { text: string; onDone: () => void; holdMs?: number; actions?: readonly { label: string; onClick: () => void }[] }) {
   return (
     <div role="status">
-      {text}
+      <span data-testid="toast-text">{text}</span>
+      {(actions ?? []).map(action => <button key={action.label} type="button" onClick={action.onClick}>{action.label}</button>)}
       <button type="button" data-testid="toast-done" onClick={onDone}>done</button>
     </div>
   )
