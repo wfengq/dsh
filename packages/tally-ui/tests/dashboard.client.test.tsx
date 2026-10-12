@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PeakSavings, TallyTokens, UsageGroup, UsageQuery } from 'dsh-tally-api'
+import type { Budget, Money, PeakSavings, TallyTokens, UsageGroup, UsageQuery } from 'dsh-tally-api'
 import { Dashboard } from '../src/client/dashboard/Dashboard.tsx'
 import type { DashboardRemote } from '../src/client/dashboard/data.ts'
 import { zh } from '../src/client/locales.ts'
@@ -52,15 +52,34 @@ function scriptedRemote(script: Script = {}) {
   return { remote: remote as unknown as DashboardRemote & typeof remote, queries }
 }
 
-function mount(script: Script = {}, visible = true, prepare?: (remote: ReturnType<typeof scriptedRemote>['remote']) => void) {
+interface Extra {
+  params?: { sessionId?: string }
+  today?: UsageGroup | null
+  month?: UsageGroup | null
+  budgets?: Budget[]
+  spend?: Record<string, Money>
+}
+
+function mount(script: Script = {}, visible = true, prepare?: (remote: ReturnType<typeof scriptedRemote>['remote']) => void, extra: Extra = {}) {
   const fake = scriptedRemote(script)
   prepare?.(fake.remote)
-  const useTabInfo = () => ({ tab: { visible } }) as never
+  const useTabInfo = () => ({ tab: { visible, navigation: { address: 'x', params: extra.params, revision: extra.params ? 1 : 0 } } }) as never
   const generation = observable(1)
   const recorded = observable(0)
-  const view = render(<Dashboard remote={fake.remote} generation={generation} recorded={recorded} now={() => NOW} useTabInfo={useTabInfo} t={t} />)
+  const today = observable<UsageGroup | null>(extra.today === undefined ? group('today', { cost: [cny('1.23')] }) : extra.today)
+  const month = observable<UsageGroup | null>(extra.month === undefined ? group('month', { cost: [cny('20.1')] }) : extra.month)
+  const budgets = observable<readonly Budget[] | null>(extra.budgets ?? [])
+  const budgetSpend = observable<Readonly<Record<string, Money>>>(extra.spend ?? {})
+  const view = render(<Dashboard remote={fake.remote} generation={generation} recorded={recorded} today={today} month={month} budgets={budgets} budgetSpend={budgetSpend} now={() => NOW} useTabInfo={useTabInfo} t={t} />)
   return { ...fake, ...view, generation, recorded }
 }
+
+const openAnalysis = () => { fireEvent.click(screen.getByRole('button', { name: zh['tab.analysis'] })) }
+const exportCsv = () => {
+  fireEvent.click(screen.getByRole('button', { name: zh['settings.more'] }))
+  fireEvent.click(screen.getByRole('menuitem', { name: zh['tab.export'] }))
+}
+const rankTab = (name: string) => { fireEvent.click(screen.getByRole('tab', { name })) }
 
 async function settle() {
   await act(async () => { await vi.advanceTimersByTimeAsync(0) })
@@ -74,21 +93,17 @@ beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
 
 describe('Dashboard', () => {
-  it('queries a span of exactly 7 days after switching to "7 days"', async () => {
+  it('offers 7 days, 30 days and this month, and loads exactly 7 days by default', async () => {
     const { queries } = mount()
     await settle()
-    queries.length = 0
-    fireEvent.click(screen.getByRole('tab', { name: zh['tab.range.7d'] }))
-    await settle()
+    expect(screen.getAllByRole('tab').map(n => n.textContent).slice(0, 3)).toEqual([zh['tab.range.7d'], zh['tab.range.30d'], zh['tab.range.month']])
     expect(queries.length).toBeGreaterThan(0)
     for (const q of queries) expect(q.to - q.from).toBe(7 * DAY)
   })
 
   it('selects the other ranges too', async () => {
     const { queries } = mount()
-    fireEvent.click(screen.getByRole('tab', { name: zh['tab.range.today'] }))
     await settle()
-    expect(queries.at(-1)!.to - queries.at(-1)!.from).toBe(DAY)
     fireEvent.click(screen.getByRole('tab', { name: zh['tab.range.30d'] }))
     await settle()
     expect(queries.at(-1)!.to - queries.at(-1)!.from).toBe(30 * DAY)
@@ -128,12 +143,25 @@ describe('Dashboard', () => {
     expect(document.querySelector('[data-tally="daily-chart"][data-currency="USD"]')).toBeNull()
   })
 
-  it('offers the unpriced entry only when requests are unpriced, summing the count', async () => {
+  it('shows unpriced requests as one muted line in the overview, summing the count', async () => {
     mount({ all: [group('2026-10-10', { unpricedCount: 2 }), group('2026-10-11', { unpricedCount: 3 })] })
     await settle()
-    const entry = document.querySelector('[data-tally="unpriced"]')!
-    expect(entry.textContent).toContain(t('tab.unpriced', { count: 5 }))
-    expect(entry.textContent).toContain(zh['settings.overrides'])
+    const entry = document.querySelector('[data-tally="overview"] [data-tally="unpriced"]')!
+    expect(entry.textContent).toBe(t('tab.unpricedLine', { count: 5 }))
+    // The way out (price overrides in the settings) is the line's tooltip.
+    expect(entry.closest('[data-tooltip-host]')?.textContent).toContain(zh['settings.overrides'])
+  })
+
+  it('puts today and this month side by side, and one progress row per budget', async () => {
+    const daily: Budget = { id: 'd', period: 'day', scope: {}, limit: cny('10') }
+    mount({}, true, undefined, { budgets: [daily], spend: { d: cny('8.2') } })
+    await settle()
+    const overview = document.querySelector('[data-tally="overview"]')!
+    expect(overview.querySelector('[data-tally="overview-today"]')?.textContent).toContain('¥1.23')
+    expect(overview.querySelector('[data-tally="overview-month"]')?.textContent).toContain('¥20.1')
+    const row = overview.querySelector('[data-tally="overview-budget"]')!
+    expect(row.getAttribute('data-tone')).toBe('warn')
+    expect(row.textContent).toContain('82%')
   })
 
   it('shows no unpriced entry when everything is priced', async () => {
@@ -142,9 +170,11 @@ describe('Dashboard', () => {
     expect(document.querySelector('[data-tally="unpriced"]')).toBeNull()
   })
 
-  it('writes the savings fact from the peakSavings result', async () => {
-    const { remote } = mount({ savings: { peak: [cny('12.5')], offpeakEquivalent: [cny('6.25')], saving: [cny('6.25')] } })
+  it('keeps cache and peak analysis collapsed, then writes the savings fact', async () => {
+    const { remote } = mount({ peak: [group('2026-10-11', { cost: [cny('12.5')] })], savings: { peak: [cny('12.5')], offpeakEquivalent: [cny('6.25')], saving: [cny('6.25')] } })
     await settle()
+    expect(document.querySelector('[data-tally="savings"]')).toBeNull()
+    openAnalysis()
     expect(remote.peakSavings).toHaveBeenCalled()
     expect(document.querySelector('[data-tally="savings"]')?.textContent).toContain(t('tab.savingsFact', { peak: '¥12.5', offpeak: '¥6.25' }))
   })
@@ -156,16 +186,28 @@ describe('Dashboard', () => {
       session: [group('s1', { deletedCount: 3 })],
     })
     await settle()
+    expect(document.querySelector('[data-tally="ranking-session"] [data-tag]')?.textContent).toBe(t('tab.deleted', { count: 3 }))
+    rankTab(zh['tab.byModel'])
     const names = [...document.querySelectorAll('[data-tally="ranking-model"] .dsh-tally-row-name')].map(n => n.textContent)
     expect(names).toEqual(['dear', 'cheap'])
+    rankTab(zh['tab.byWorkspace'])
     expect(document.querySelector('[data-tally="ranking-workspace"]')?.textContent).toContain(zh['tab.unknownWorkspace'])
-    expect(document.querySelector('[data-tally="ranking-session"]')?.textContent).toContain(t('tab.deleted', { count: 3 }))
   })
 
-  it('keeps only the top 10 of a ranking', async () => {
+  it('shows the top 10 of a ranking and the rest on "show all"', async () => {
     mount({ model: Array.from({ length: 14 }, (_, i) => group(`m${i}`, { cost: [cny(String(i + 1))] })) })
     await settle()
+    rankTab(zh['tab.byModel'])
     expect(document.querySelectorAll('[data-tally="ranking-model"] [data-tally="rank-row"]')).toHaveLength(10)
+    fireEvent.click(screen.getByRole('button', { name: zh['tab.showAll'] }))
+    expect(document.querySelectorAll('[data-tally="ranking-model"] [data-tally="rank-row"]')).toHaveLength(14)
+  })
+
+  it('opened on a session, selects the session ranking and highlights it past the top 10', async () => {
+    mount({ session: Array.from({ length: 12 }, (_, i) => group(`s${i}`, { cost: [cny(String(20 - i))] })) }, true, undefined, { params: { sessionId: 's11' } })
+    await settle()
+    const row = document.querySelector('[data-tally="ranking-session"] [data-tally="rank-row"][data-current="true"]')
+    expect(row?.textContent).toContain('s11')
   })
 
   it('exports through exportCsv and downloads tally-<from>-<to>.csv', async () => {
@@ -175,9 +217,8 @@ describe('Dashboard', () => {
     const clicked: string[] = []
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { clicked.push(`${this.download}|${this.href}`) })
     const { remote } = mount({ csv: 'id,cost\n1,0.5\n' })
-    fireEvent.click(screen.getByRole('tab', { name: zh['tab.range.7d'] }))
     await settle()
-    fireEvent.click(screen.getByRole('button', { name: zh['tab.export'] }))
+    exportCsv()
     await settle()
     expect(remote.exportCsv).toHaveBeenCalledTimes(1)
     const request = remote.exportCsv.mock.calls[0]![0] as { from: number; to: number; tz: string }
@@ -199,10 +240,18 @@ describe('Dashboard', () => {
     const { remote } = mount()
     remote.exportCsv.mockResolvedValueOnce({ ok: false, error: { code: 'x', message: 'no' } } as never)
     await settle()
-    fireEvent.click(screen.getByRole('button', { name: zh['tab.export'] }))
+    exportCsv()
     await settle()
     expect(createObjectURL).not.toHaveBeenCalled()
     expect(screen.getByRole('alert').textContent).toBe(zh['tab.error'])
+  })
+
+  it('shows the empty sentence without any usage, and placeholders without loading text meanwhile', async () => {
+    mount()
+    expect(document.querySelector('[data-tally="skeleton"]')).not.toBeNull()
+    expect(screen.queryByText(zh['tab.loading'])).toBeNull()
+    await settle()
+    expect(screen.getByText(zh['tab.empty'])).toBeTruthy()
   })
 
   it('shows an error with retry when a query is refused', async () => {

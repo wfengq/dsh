@@ -1,5 +1,6 @@
 /** Settings card and row in dsh's own settings layout: name and hint on the left, the control on the right. */
 import type { ReactNode } from 'react'
+import '../card.css'
 
 export function SettingsCard({ title, description, children, tally }: {
   title: string

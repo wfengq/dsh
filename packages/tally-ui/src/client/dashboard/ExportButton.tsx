@@ -1,4 +1,4 @@
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useState, type ReactNode } from 'react'
 import type { T } from '../labels.ts'
 import type { DateRange } from './definition.ts'
@@ -14,8 +14,9 @@ function stamp(at: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-/** Downloads the range as `tally-<from>-<to>.csv`; the end date is the last included day. */
-export function ExportButton({ remote, range, tz, t }: { remote: DashboardRemote; range: DateRange; tz: string; t: T }): ReactNode {
+/** The page's ⋯ menu; its one item downloads the range as `tally-<from>-<to>.csv` (the end date is the last included day). */
+export function ExportMenu({ remote, range, tz, t }: { remote: DashboardRemote; range: DateRange; tz: string; t: T }): ReactNode {
+  const [open, setOpen] = useState(false)
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const run = async () => {
@@ -42,8 +43,15 @@ export function ExportButton({ remote, range, tz, t }: { remote: DashboardRemote
   }
   return (
     <div className="dsh-tally-export">
-      <Button variant="outline" size="sm" disabled={busy} data-tally="export" onClick={() => { void run() }}>{t('tab.export')}</Button>
       {failed ? <span className="dsh-tally-error" role="alert">{t('tab.error')}</span> : null}
+      <Menu
+        open={open}
+        onClose={() => { setOpen(false) }}
+        align="end"
+        onSelect={(id) => { if (id === 'export') void run() }}
+        items={[{ id: 'export', label: t('tab.export'), disabled: busy }]}
+        anchor={<Button variant="ghost" size="sm" data-tally="export" aria-label={t('settings.more')} onClick={() => { setOpen(o => !o) }}>⋯</Button>}
+      />
     </div>
   )
 }

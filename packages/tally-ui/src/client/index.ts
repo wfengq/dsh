@@ -176,7 +176,15 @@ export async function apply(ctx: Context): Promise<void> {
     // It needs the right sidebar's registry; a host without it keeps every other element.
     scope.inject(['sidebarRightTabs'], tabScope => tabScope.slots.inject(SIDEBAR_TAB, () => {
       const t = tabScope.locale.bind(NS)
-      const dashboard: DashboardInjected = { remote, generation: store.generation, recorded: store.recorded }
+      const dashboard: DashboardInjected = {
+        remote,
+        generation: store.generation,
+        recorded: store.recorded,
+        today: store.today,
+        month: store.month,
+        budgets: store.budgets,
+        budgetSpend: store.budgetSpend,
+      }
       let withdraw: (() => void) | undefined
       const sync = () => {
         const wanted = elements.getSnapshot().sidebarTab

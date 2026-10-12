@@ -16,7 +16,8 @@ export function tabDefinition(t: T): SidebarRightTabDefinition {
 }
 
 export type RangeId = 'today' | '7d' | '30d' | 'month'
-export const RANGES: readonly RangeId[] = ['today', '7d', '30d', 'month']
+/** Today is always in the overview, so the range switch starts at a week. */
+export const RANGES: readonly RangeId[] = ['7d', '30d', 'month']
 
 export interface DateRange {
   /** Epoch milliseconds, inclusive. */

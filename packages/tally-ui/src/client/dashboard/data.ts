@@ -11,7 +11,6 @@ import { hitRate } from '../format.ts'
 export type DashboardRemote = Pick<TallyRemoteApi, 'query' | 'peakSavings' | 'exportCsv'>
 
 const CURRENCIES = ['CNY', 'USD'] as const
-const TOP = 10
 
 export interface CurrencyChart {
   currency: Money['currency']
@@ -25,6 +24,9 @@ export interface DashboardData {
   /** Cache hit rate per day, `null` for a day without input. */
   hitRates: { key: string; rate: number | null }[]
   unpricedCount: number
+  /** Requests in the range, priced or not. */
+  requestCount: number
+  /** Every group of each ranking, largest cost first; the page shows the top 10 until asked for all. */
   models: UsageGroup[]
   workspaces: UsageGroup[]
   sessions: UsageGroup[]
@@ -49,8 +51,8 @@ function byCostDescending(a: UsageGroup, b: UsageGroup): number {
   return b.requestCount - a.requestCount
 }
 
-export function topGroups(groups: readonly UsageGroup[]): UsageGroup[] {
-  return [...groups].sort(byCostDescending).slice(0, TOP)
+export function sortGroups(groups: readonly UsageGroup[]): UsageGroup[] {
+  return [...groups].sort(byCostDescending)
 }
 
 function costByDay(groups: readonly UsageGroup[]): Map<string, readonly Money[]> {
@@ -92,9 +94,10 @@ export async function loadDashboard(remote: DashboardRemote, range: DateRange, t
     charts,
     hitRates,
     unpricedCount: all.reduce((sum, g) => sum + g.unpricedCount, 0),
-    models: topGroups(models),
-    workspaces: topGroups(workspaces),
-    sessions: topGroups(sessions),
+    requestCount: all.reduce((sum, g) => sum + g.requestCount, 0),
+    models: sortGroups(models),
+    workspaces: sortGroups(workspaces),
+    sessions: sortGroups(sessions),
     savings,
   }
 }
