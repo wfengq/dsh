@@ -17,7 +17,11 @@ export const MenuSurface = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<'
   },
 )
 
-export function useAnchoredPosition(): Record<string, never> {
+/** The placement each anchored panel asked for, newest last. */
+export const anchoredPlacements: { side?: string; align?: string }[] = []
+
+export function useAnchoredPosition(options: { side?: string; align?: string }): Record<string, never> {
+  anchoredPlacements.push({ side: options.side, align: options.align })
   return {}
 }
 

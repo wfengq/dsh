@@ -178,7 +178,7 @@ export function CostDock(props: CostDockProps): ReactNode {
 
   return (
     <div className="dsh-tally-dock" data-tally="dock">
-      <Details anchor={bar} content={details} label={t('dock.details')} />
+      <Details anchor={bar} content={details} label={t('dock.details')} side="top" align="end" />
     </div>
   )
 }

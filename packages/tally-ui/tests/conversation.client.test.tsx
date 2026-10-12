@@ -9,6 +9,7 @@ import { zh } from '../src/client/locales.ts'
 import { SessionTotal } from '../src/client/SessionTotal.tsx'
 import { TurnCost } from '../src/client/TurnCost.tsx'
 import { hookOf, observable } from './support/hooks.ts'
+import { anchoredPlacements } from './support/primitives.tsx'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => import('./support/primitives.tsx'))
 
@@ -59,6 +60,12 @@ function dockProps(opts: {
   }
 }
 
+/** Rests the pointer on a details anchor long enough for its panel to open. */
+function hoverDetails(): void {
+  fireEvent.mouseEnter(document.querySelector('.dsh-tally-details')!)
+  act(() => { vi.advanceTimersByTime(500) })
+}
+
 async function settle() {
   await act(async () => { await vi.advanceTimersByTimeAsync(0) })
 }
@@ -74,7 +81,7 @@ afterEach(() => {
 })
 
 describe('CostDock', () => {
-  const hover = () => { fireEvent.mouseEnter(screen.getByTestId('hover-anchor')) }
+  const hover = hoverDetails
   const order = () => [...document.querySelectorAll('[data-tally="dock"] [data-tally-item]')].map(n => n.getAttribute('data-tally-item'))
   const daily: Budget = { id: 'd', period: 'day', scope: {}, limit: cny('10') }
   const monthly: Budget = { id: 'm', period: 'month', scope: {}, limit: cny('100') }
@@ -117,13 +124,36 @@ describe('CostDock', () => {
     render(<CostDock {...dockProps({ budgets: [daily], spend: { d: cny('3.2') }, balances: { deepseek: balance({ wallets: [{ kind: 'total', money: cny('9') }] }) } })} />)
     await settle()
     hover()
-    const card = screen.getByTestId('hover-card')
+    const card = screen.getByRole('dialog', { name: zh['dock.details'] })
     expect(card.querySelector('[data-tally="session"]')?.textContent).toContain('¥1.5')
     expect(card.querySelector('[data-tally="today"]')?.textContent).toContain('¥3')
     expect(card.querySelector('[data-tally="month"]')?.textContent).toContain('¥20')
     expect(card.querySelector('[data-tally="budget-line"]')?.textContent).toContain(t('settings.budget.spent', { spent: '¥3.2', limit: '¥10' }))
     expect(card.querySelector('[data-tally="balance"]')?.textContent).toContain('¥9')
     expect(card.textContent).toContain(zh['dock.openDashboard'])
+  })
+
+  it('opens the hover details above the bar, lined up with its right edge, so they stay inside the window', async () => {
+    render(<CostDock {...dockProps()} />)
+    await settle()
+    anchoredPlacements.length = 0
+    hover()
+    expect(screen.getByRole('dialog', { name: zh['dock.details'] })).toBeTruthy()
+    expect(anchoredPlacements.at(-1)).toEqual({ side: 'top', align: 'end' })
+  })
+
+  it('waits for the pointer to rest before opening and closes once it leaves', async () => {
+    render(<CostDock {...dockProps()} />)
+    await settle()
+    const root = document.querySelector('.dsh-tally-details')!
+    fireEvent.mouseEnter(root)
+    act(() => { vi.advanceTimersByTime(100) })
+    expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
+    act(() => { vi.advanceTimersByTime(400) })
+    expect(screen.getByRole('dialog', { name: zh['dock.details'] })).toBeTruthy()
+    fireEvent.mouseLeave(root)
+    act(() => { vi.advanceTimersByTime(500) })
+    expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
   })
 
   it('opens the same details for keyboard focus, with the balance refresh reachable, and closes on Escape', async () => {
@@ -155,7 +185,7 @@ describe('CostDock', () => {
     await settle()
     fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['dock.today']) }))
     expect(props.openDashboard).not.toHaveBeenCalled()
-    fireEvent.mouseEnter(screen.getByTestId('hover-anchor'))
+    hover()
     expect(screen.queryByText(zh['dock.openDashboard'])).toBeNull()
   })
 
@@ -345,6 +375,14 @@ describe('SessionTotal', () => {
     expect(openDashboard).toHaveBeenCalledWith('s1')
   })
 
+  it('opens its details below the header total', async () => {
+    render(total(sessionView(group([cny('5')]))))
+    anchoredPlacements.length = 0
+    hoverDetails()
+    expect(screen.getByRole('dialog', { name: zh['header.total'] })).toBeTruthy()
+    expect(anchoredPlacements.at(-1)).toEqual({ side: 'bottom', align: 'start' })
+  })
+
   it('shows the subagent list to keyboard focus as well', async () => {
     const view = sessionView(group([cny('5')]), [{ sessionId: 'sub-a', total: group([cny('1.25')]) }])
     render(total(view))
@@ -359,7 +397,7 @@ describe('SessionTotal', () => {
       { sessionId: 'sub-b', total: group([], { unpricedCount: 2 }) },
     ])
     render(total(view, [{ ...group([cny('4')]), key: 'deepseek-chat' }, { ...group([cny('1')], { requestCount: 3 }), key: 'deepseek-reasoner' }]))
-    fireEvent.mouseEnter(screen.getByTestId('hover-anchor'))
+    hoverDetails()
     await settle()
     const models = [...document.querySelectorAll('[data-tally="model-row"]')].map(row => row.textContent)
     expect(models[0]).toContain('deepseek-chat')
