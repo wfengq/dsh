@@ -1,0 +1,44 @@
+.dsh-tally-turn {
+  display: flex;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-turn-anchor {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  cursor: default;
+}
+
+.dsh-tally-turn-anchor .dsh-tally-num,
+.dsh-tally-turn-details .dsh-tally-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-tally-turn-details {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 12px;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-tally-turn-details dt {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-turn-details dd {
+  margin: 0;
+  text-align: right;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-tally-turn-details a {
+  color: var(--dsw-alias-link);
+}

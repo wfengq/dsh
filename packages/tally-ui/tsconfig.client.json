@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "emitDeclarationOnly": true,
+    "jsx": "react-jsx",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "types": []
+  },
+  // The entry goes first: it loads @deepseek-ai/cordis before any module reaches it through
+  // dsh-tally-api's `Context` augmentation. In the opposite order tsc loses the `Fiber` members
+  // (`effect`, `inject`) of `Context`.
+  "files": ["src/client/index.ts"],
+  "include": ["src/client"]
+}

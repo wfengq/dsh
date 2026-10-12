@@ -1,0 +1,73 @@
+.dsh-tally-total {
+  display: inline-flex;
+  align-self: center;
+  margin: 0 4px;
+}
+
+.dsh-tally-total-button {
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.dsh-tally-total-button:hover,
+.dsh-tally-total-button[aria-expanded="true"] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-tally-total-menu {
+  z-index: 50;
+  min-width: 220px;
+  max-width: 360px;
+  padding: 8px 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-tally-total-head,
+.dsh-tally-total-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 12px;
+}
+
+.dsh-tally-total-caption {
+  padding: 2px 12px 4px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-total-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-tally-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-tally-total-button { display: inline-flex; align-items: center; gap: 4px; }
+
+.dsh-tally-total-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dsh-tally-total-meta {
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}

@@ -1,0 +1,115 @@
+/*
+ * One line under the composer; items drop out by priority as the window narrows (band, month, budget).
+ * The dock row sizes its items to their content, so the line cannot be a size container (that would
+ * collapse it to zero width); the window width stands in for the composer width.
+ */
+.dsh-tally-dock {
+  display: block;
+  padding: 2px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-tally-dock-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  max-width: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 8px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dsh-tally-dock-bar:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dsh-tally-dock-bar:focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: 1px; }
+
+.dsh-tally-dock-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* The separator dot belongs to the item it precedes, so a hidden item takes its dot along. */
+.dsh-tally-dock-item + .dsh-tally-dock-item::before {
+  content: "·";
+  margin: 0 8px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-dock-item[data-tone="warn"] { color: var(--dsw-alias-state-warn-primary); }
+.dsh-tally-dock-item[data-tone="over"] { color: var(--dsw-alias-state-error-primary); }
+
+.dsh-tally-dock-item .dsh-tally-progress-track {
+  display: inline-block;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--dsw-alias-bg-layer-3);
+  overflow: hidden;
+}
+
+.dsh-tally-dock-item .dsh-tally-progress-fill {
+  display: block;
+  width: calc(var(--dsh-tally-progress, 0) * 100%);
+  height: 100%;
+  background: currentColor;
+}
+
+@media (max-width: 1100px) {
+  .dsh-tally-dock-item[data-tally-item="band"] { display: none; }
+}
+
+@media (max-width: 860px) {
+  .dsh-tally-dock-item[data-tally-item="month"] { display: none; }
+}
+
+@media (max-width: 640px) {
+  .dsh-tally-dock-item[data-tally-item="budget"] { display: none; }
+}
+
+.dsh-tally-label {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-tally-dock-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 320px;
+  padding: 4px 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: inherit;
+}
+
+.dsh-tally-dock-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dsh-tally-dock-line-label { opacity: 0.7; }
+.dsh-tally-dock-line[data-tone="warn"] .dsh-tally-num { color: var(--dsw-alias-state-warn-primary); }
+.dsh-tally-dock-line[data-tone="over"] .dsh-tally-num { color: var(--dsw-alias-state-error-primary); }
+
+.dsh-tally-details { display: inline-flex; max-width: 100%; }
+.dsh-tally-details-panel { z-index: 50; padding: 8px 12px; }
+
+/* When the line still overflows (a narrow composer in a wide window), the band text ends in an ellipsis. */
+.dsh-tally-dock-item[data-tally-item="band"] { min-width: 0; flex-shrink: 1; }
+.dsh-tally-dock-item[data-tally-item="band"] .dsh-tally-num { overflow: hidden; text-overflow: ellipsis; }
+.dsh-tally-dock-bar[data-can-open="false"] { cursor: default; }

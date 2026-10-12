@@ -1,0 +1,86 @@
+{
+  "name": "dsh-tally",
+  "version": "0.1.0",
+  "description": "dsh 的用量、计价、余额与预算共享数据层：按请求记账、预算提醒、浏览器 Remote API 和对账工具",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "usage",
+    "cost",
+    "budget",
+    "ledger"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfengq/dsh.git",
+    "directory": "packages/tally"
+  },
+  "homepage": "https://github.com/wfengq/dsh/tree/main/packages/tally#readme",
+  "bugs": "https://github.com/wfengq/dsh/issues",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./remote": {
+      "types": "./lib/remote/contract.d.ts",
+      "default": "./lib/remote/contract.js"
+    }
+  },
+  "bin": {
+    "dsh-tally": "./lib/cli.js"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "dsh-pricing-data": "workspace:^",
+    "dsh-tally-api": "workspace:^",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.4-0 <4.1.0-0",
+    "@deepseek-ai/dsh-atomic-write": ">=0.2.0-0 <0.3.0-0",
+    "@deepseek-ai/dsh-home-paths": ">=0.2.0-0 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.2.0-0 <0.3.0-0",
+    "@deepseek-ai/dsh-session": ">=0.2.0-0 <0.3.0-0",
+    "@deepseek-ai/dsh-session-query": ">=0.2.0-0 <0.3.0-0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.0-0 <0.3.0-0",
+    "@deepseek-ai/schemastery": ">=3.18.4-0 <3.19.0-0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.5",
+    "@deepseek-ai/dsh-api-gateway": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-atomic-write": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-home-paths": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm-retry": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-query": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-token-meter": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-registry": "0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "3.18.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

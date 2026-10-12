@@ -1,0 +1,5 @@
+node_modules
+lib
+*.sqlite
+.superpowers/
+packages/tally-ui/tests/e2e/screenshots/

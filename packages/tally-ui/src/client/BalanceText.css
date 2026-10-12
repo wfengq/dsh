@@ -1,0 +1,24 @@
+.dsh-tally-balance {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dsh-tally-balance:hover .dsh-tally-num {
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-tally-balance[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.dsh-tally-balance-stale {
+  color: var(--dsw-alias-state-warn-primary);
+}

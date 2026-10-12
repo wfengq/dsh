@@ -1,0 +1,71 @@
+import { DisclosureRow } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useCallback, useState, type ReactNode } from 'react'
+import type { CatalogView, Money, TallyStatusView } from 'dsh-tally-api'
+import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import type { T } from '../labels.ts'
+import type { Snapshot } from '../store.ts'
+import { BudgetsCard, type BudgetsRemote } from './BudgetsCard.tsx'
+import { CatalogInfo } from './CatalogInfo.tsx'
+import { ElementSwitches, type ElementsFace } from './ElementSwitches.tsx'
+import { useSnapshot } from './form.ts'
+import { OverridesEditor, type OverridesFace } from './OverridesEditor.tsx'
+import { Problems } from './Problems.tsx'
+import { RebuildButton } from './RebuildButton.tsx'
+import './settings.css'
+
+/** The `tally` Remote methods the settings page calls. */
+export interface SettingsRemote extends BudgetsRemote {
+  catalog(): Promise<RemoteResult<CatalogView>>
+  rebuild(): Promise<RemoteResult<void>>
+}
+
+/** What the registration hands the section. */
+export interface SectionInjected {
+  remote: SettingsRemote
+  overridesForm: OverridesFace
+  elementsForm: ElementsFace
+  status: Snapshot<TallyStatusView | null>
+  /** The store's `hello` count: the catalog and budgets are read again when it changes. */
+  generation: Snapshot<number>
+  /** The store's per-budget spend over each budget's current period. */
+  budgetSpend: Snapshot<Readonly<Record<string, Money>>>
+  /** Tells the store a budget changed, so the dock and the dashboard follow at once. */
+  refreshBudgets: () => Promise<void>
+}
+
+export type SectionProps = SectionInjected & { close: () => void; t: T }
+
+/** Usage and cost page of the settings panel. */
+export function Section({ remote, overridesForm, elementsForm, status, generation, budgetSpend, refreshBudgets, t }: SectionProps): ReactNode {
+  const hello = useSnapshot(generation)
+  const [advanced, setAdvanced] = useState(false)
+  // A new `hello` gives a new loader, which CatalogInfo and BudgetsCard key their loads on.
+  const load = useCallback(async () => {
+    const result = await remote.catalog()
+    return result.ok ? result.value : null
+  }, [remote, hello])
+  return (
+    <div className="dsh-tally-settings" data-tally="settings">
+      <BudgetsCard remote={remote} generation={hello} budgetSpend={budgetSpend} onChanged={refreshBudgets} t={t} />
+      <ElementSwitches form={elementsForm} t={t} />
+      <Problems status={status} t={t} />
+      <div className="dsh-tally-advanced" data-tally="advanced">
+        <DisclosureRow
+          icon={null}
+          title={t('settings.advanced')}
+          open={advanced}
+          expandable
+          expandOnRowClick
+          onToggle={() => { setAdvanced(o => !o) }}
+          className="dsh-tally-disclosure"
+        >
+          <div className="dsh-tally-advanced-body">
+            <CatalogInfo load={load} t={t} />
+            <OverridesEditor form={overridesForm} status={status} loadCatalog={load} t={t} />
+            <RebuildButton rebuild={() => remote.rebuild()} status={status} t={t} />
+          </div>
+        </DisclosureRow>
+      </div>
+    </div>
+  )
+}

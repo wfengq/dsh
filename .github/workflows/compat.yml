@@ -1,0 +1,43 @@
+name: compat
+
+# Runs the whole suite against the dsh versions behind the `latest` and `alpha` npm dist-tags.
+# The daily schedule picks up new dsh releases (there is no publish webhook to listen to).
+# Pushes to main and pull requests only: a branch with an open PR would otherwise run twice per commit.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 1 * * *'
+
+# The event is part of the key so a scheduled run and a push to main do not cancel each other.
+concurrency:
+  group: compat-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: dsh ${{ matrix.channel }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [latest, alpha]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.19.0
+      - name: Use dsh ${{ matrix.channel }}
+        run: node scripts/use-dsh-channel.mjs ${{ matrix.channel }}
+      - run: pnpm install --no-frozen-lockfile
+      - name: Install Chromium for the web e2e
+        run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test
+      - run: pnpm typecheck
+      - run: pnpm test:e2e
+      - run: pnpm test:perf

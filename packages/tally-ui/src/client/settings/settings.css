@@ -1,0 +1,148 @@
+.dsh-tally-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.dsh-tally-settings-part h3 {
+  margin: 0 0 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dsh-tally-settings-part h4 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dsh-tally-settings .dsh-tally-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.dsh-tally-settings .dsh-tally-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dsh-tally-settings .dsh-tally-meta {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.dsh-tally-settings .dsh-tally-form,
+.dsh-tally-settings .dsh-tally-model-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dsh-tally-settings .dsh-tally-form {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.dsh-tally-settings .dsh-tally-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dsh-tally-settings .dsh-tally-hint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-settings .dsh-tally-error {
+  margin: 0;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-tally-settings .dsh-tally-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-link);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dsh-tally-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: min(360px, 80vw);
+}
+
+.dsh-tally-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dsh-tally-field-label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dsh-tally-field-error {
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dsh-tally-amount {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dsh-tally-amount > input { flex: 1; min-width: 0; }
+
+.dsh-tally-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dsh-tally-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-top: 12px;
+}
+
+.dsh-tally-problem {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.dsh-tally-row-warn { color: var(--dsw-alias-state-warn-primary); }
+
+.dsh-tally-problem-list {
+  margin: 4px 0 0;
+  padding: 0 0 0 16px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.dsh-tally-model-name { outline-offset: 2px; }
+.dsh-tally-block { display: block; }

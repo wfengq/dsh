@@ -1,0 +1,44 @@
+{
+  "name": "dsh-pricing-data",
+  "version": "0.1.0",
+  "description": "DeepSeek 等模型厂商的价格数据和计价函数：峰谷时段、节假日、价格版本，金额用定点运算",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "pricing",
+    "token",
+    "cost"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfengq/dsh.git",
+    "directory": "packages/pricing-data"
+  },
+  "homepage": "https://github.com/wfengq/dsh/tree/main/packages/pricing-data#readme",
+  "bugs": "https://github.com/wfengq/dsh/issues",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./catalog.json": "./catalog.json"
+  },
+  "files": [
+    "lib",
+    "catalog.json",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

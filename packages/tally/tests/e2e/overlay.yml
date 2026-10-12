@@ -1,0 +1,7 @@
+# Mounts dsh-tally into the headless profile for the e2e smoke test.
+# A bare `name: dsh-tally` does not import here: dsh resolves bare plugin names only from its own
+# installation and from the profile's node_modules, and the test profile lives in a throwaway
+# DSH_HOME. Relative names are anchored beside this file, so this points at the built entry.
+- insert:
+    - id: tally
+      name: ../../lib/index.js
