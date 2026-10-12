@@ -107,3 +107,60 @@ export function Modal({ open, onClose: _onClose, title, children, footer }: {
 }) {
   return open ? <div role="dialog" aria-modal="true" aria-label={title}>{children}{footer}</div> : null
 }
+
+interface MenuEntryStub { id?: string; label?: ReactNode; danger?: boolean; disabled?: boolean; type?: string }
+
+/** The anchor, plus one menuitem button per item while open; choosing one reports its id and closes. */
+export function Menu({ open, anchor, items, onSelect, onClose }: {
+  open: boolean
+  anchor: ReactNode
+  items?: readonly MenuEntryStub[]
+  onSelect?: (id: string) => void
+  onClose: () => void
+  [key: string]: unknown
+}) {
+  return (
+    <>
+      {anchor}
+      {open
+        ? (
+            <div role="menu">
+              {(items ?? []).filter(item => item.id !== undefined).map(item => (
+                <button key={item.id} type="button" role="menuitem" disabled={item.disabled} onClick={() => { onSelect?.(item.id!); onClose() }}>{item.label}</button>
+              ))}
+            </div>
+          )
+        : null}
+    </>
+  )
+}
+
+/** A toggle button carrying the title; the content shows while open. */
+export function DisclosureRow({ title, open, onToggle, children, collapsedContent }: {
+  title: string
+  open: boolean
+  onToggle: () => void
+  children?: ReactNode
+  collapsedContent?: ReactNode
+  [key: string]: unknown
+}) {
+  return (
+    <div>
+      <button type="button" aria-expanded={open} onClick={onToggle}>{title}</button>
+      {open ? children : collapsedContent}
+    </div>
+  )
+}
+
+export function StateDot({ state }: { state: string; [key: string]: unknown }) {
+  return <span data-state-dot={state} aria-hidden="true" />
+}
+
+/** Renders the child with its label as a description, so tests can find tooltip text. */
+export function Tooltip({ label, children }: { label: ReactNode; children: ReactNode; [key: string]: unknown }) {
+  return <span data-tooltip-host="">{children}<span hidden data-tooltip="">{label}</span></span>
+}
+
+export function Tag({ children, tone }: { children?: ReactNode; tone?: string; className?: string }) {
+  return <span data-tag={tone ?? ''}>{children}</span>
+}

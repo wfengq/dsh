@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Budget, CatalogView, TallyStatusView } from 'dsh-tally-api'
+import type { Budget, CatalogView, Money, TallyStatusView, UsageGroup } from 'dsh-tally-api'
 import { en, zh } from '../src/client/locales.ts'
 import { Section, type SectionProps } from '../src/client/settings/Section.tsx'
 import { observable } from './support/hooks.ts'
@@ -42,7 +42,10 @@ function fakeForm(patch: Partial<FormState> = {}) {
 const setOp = (path: string[], value: unknown) => [{ op: 'set', path, value }]
 
 const statusView = (backfill: { done: number; total: number } | null): TallyStatusView => ({
-  usage: { backfill, errors: [] }, catalogVersion: 'v1', pricingErrors: [], budgetErrors: [], balanceRoutes: [],
+  usage: { backfill, errors: [] }, catalogVersion: 'v1', pricingErrors: [], budgetErrors: [], balanceRoutes: [], routes: [],
+})
+const workspaceGroup = (key: string): UsageGroup => ({
+  key, tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 }, cost: [], requestCount: 1, unpricedCount: 0, unknownUsageCount: 0,
 })
 
 function mount(options: {
@@ -51,19 +54,22 @@ function mount(options: {
   budgets?: Budget[]
   setBudget?: (b: Budget) => Promise<unknown>
   status?: TallyStatusView | null
+  spend?: Record<string, Money>
 } = {}) {
   const overrides = fakeForm(options.overrides)
   const elements = fakeForm({ value: { elements: {} }, ...options.elements })
   const status = observable<TallyStatusView | null>(options.status ?? null)
   const generation = observable(1)
+  const budgetSpend = observable<Record<string, Money>>(options.spend ?? {})
   const remote = {
+    query: vi.fn(async () => ok([workspaceGroup('/w'), workspaceGroup('')])),
     catalog: vi.fn(async () => ok(catalog)),
     budgets: vi.fn(async () => ok(options.budgets ?? [])),
     setBudget: vi.fn(options.setBudget ?? (async () => ok(undefined))),
     removeBudget: vi.fn(async () => ok(undefined)),
     rebuild: vi.fn(async () => ok(undefined)),
   }
-  const props = { remote, overridesForm: overrides, elementsForm: elements, status, generation, close: () => {}, t } as unknown as SectionProps
+  const props = { remote, overridesForm: overrides, elementsForm: elements, status, generation, budgetSpend, close: () => {}, t } as unknown as SectionProps
   const view = render(<Section {...props} />)
   return { overrides, elements, status, generation, remote, ...view }
 }
@@ -96,7 +102,7 @@ describe('catalog source links', () => {
       providers: [{ ...catalog.providers[0]!, models: [{ ...catalog.providers[0]!.models[0]!, source: { url: 'javascript:alert(1)', retrievedAt: 'x' } }] }],
     }))
     cleanup()
-    render(<Section {...({ remote: mounted.remote, overridesForm: mounted.overrides, elementsForm: mounted.elements, status: mounted.status, generation: mounted.generation, close: () => {}, t } as unknown as SectionProps)} />)
+    render(<Section {...({ remote: mounted.remote, overridesForm: mounted.overrides, elementsForm: mounted.elements, status: mounted.status, generation: mounted.generation, budgetSpend: observable({}), close: () => {}, t } as unknown as SectionProps)} />)
     await screen.findByText('deepseek-chat')
     expect(screen.queryByRole('link')).toBeNull()
   })
@@ -174,52 +180,104 @@ describe('overrides editor', () => {
   })
 })
 
-describe('budgets editor', () => {
-  async function fillBudget() {
-    fireEvent.click(await screen.findByRole('tab', { name: label('settings.budget.month') }))
-    fireEvent.change(screen.getByLabelText(label('settings.budget.amount')), { target: { value: '100' } })
+describe('budgets card', () => {
+  async function openAdd() {
+    fireEvent.click(await screen.findByRole('button', { name: label('settings.budget.add') }))
+    return screen.getByRole('dialog', { name: label('settings.budget.add') })
   }
 
-  it('creates a monthly 100 CNY budget', async () => {
+  it('shows the explanation and an add button when there are no budgets', async () => {
+    mount()
+    expect(await screen.findByText(label('settings.budget.empty'))).toBeTruthy()
+    expect(screen.getByRole('button', { name: label('settings.budget.add') })).toBeTruthy()
+  })
+
+  it('shows period · scope, spent / limit and a warn tone at 82%', async () => {
+    const budget: Budget = { id: 'b1', period: 'day', scope: {}, limit: { amount: '10', currency: 'CNY' } }
+    mount({ budgets: [budget], spend: { b1: { amount: '8.2', currency: 'CNY' } } })
+    const row = (await screen.findByText(`${label('settings.budget.day')} · ${label('settings.budget.allWorkspaces')}`)).closest('[data-tally="budget-row"]') as HTMLElement
+    expect(within(row).getByText(t('settings.budget.spent', { spent: '¥8.2', limit: '¥10' }))).toBeTruthy()
+    const pct = within(row).getByText('82%')
+    expect(pct.closest('[data-tone]')?.getAttribute('data-tone')).toBe('warn')
+  })
+
+  it('says how much a budget is over past 100%', async () => {
+    const budget: Budget = { id: 'b1', period: 'month', scope: { workspaceId: '/w' }, limit: { amount: '100', currency: 'CNY' } }
+    mount({ budgets: [budget], spend: { b1: { amount: '102', currency: 'CNY' } } })
+    expect(await screen.findByText(`${label('settings.budget.month')} · /w`)).toBeTruthy()
+    const over = screen.getByText(t('settings.budget.over', { amount: '¥2' }))
+    expect(over.closest('[data-tone]')?.getAttribute('data-tone')).toBe('over')
+  })
+
+  it('adds a monthly budget for a picked workspace through the dialog and closes it', async () => {
     const view = mount()
-    await fillBudget()
-    fireEvent.click(screen.getByRole('button', { name: label('settings.budget.add') }))
+    const dialog = await openAdd()
+    fireEvent.click(within(dialog).getByRole('tab', { name: label('settings.budget.month') }))
+    fireEvent.click(within(dialog).getByRole('button', { name: label('settings.budget.allWorkspaces') }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '/w' }))
+    fireEvent.change(within(dialog).getByLabelText(label('settings.budget.amount')), { target: { value: '20' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: label('settings.save') }))
     await waitFor(() => { expect(view.remote.setBudget).toHaveBeenCalledTimes(1) })
     expect(view.remote.setBudget).toHaveBeenCalledWith({
-      id: expect.stringMatching(/.+/), period: 'month', scope: {}, limit: { amount: '100', currency: 'CNY' },
+      id: expect.stringMatching(/.+/), period: 'month', scope: { workspaceId: '/w' }, limit: { amount: '20', currency: 'CNY' },
     })
+    await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull() })
   })
 
-  it('keeps add disabled for a zero or malformed amount', async () => {
+  it('keeps save disabled and explains an invalid amount', async () => {
     mount()
-    await fillBudget()
-    const add = screen.getByRole('button', { name: label('settings.budget.add') }) as HTMLButtonElement
-    expect(add.disabled).toBe(false)
-    fireEvent.change(screen.getByLabelText(label('settings.budget.amount')), { target: { value: '0.00' } })
-    expect(add.disabled).toBe(true)
-    fireEvent.change(screen.getByLabelText(label('settings.budget.amount')), { target: { value: '1e3' } })
-    expect(add.disabled).toBe(true)
+    const dialog = await openAdd()
+    fireEvent.change(within(dialog).getByLabelText(label('settings.budget.amount')), { target: { value: '1.234' } })
+    expect((within(dialog).getByRole('button', { name: label('settings.save') }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(dialog).getByText(label('settings.budget.invalidAmount'))).toBeTruthy()
   })
 
-  it('shows the server message when the budget is refused', async () => {
+  it('refuses a duplicate period and scope', async () => {
+    mount({ budgets: [{ id: 'b1', period: 'day', scope: {}, limit: { amount: '10', currency: 'CNY' } }] })
+    const dialog = await openAdd()
+    fireEvent.change(within(dialog).getByLabelText(label('settings.budget.amount')), { target: { value: '5' } })
+    expect(within(dialog).getByText(label('settings.budget.duplicate'))).toBeTruthy()
+    expect((within(dialog).getByRole('button', { name: label('settings.save') }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('keeps the dialog open and shows the server message on failure', async () => {
     mount({ setBudget: async () => fail('tally/invalid-budget', 'limit must be positive') })
-    await fillBudget()
-    fireEvent.click(screen.getByRole('button', { name: label('settings.budget.add') }))
-    expect((await screen.findByRole('alert')).textContent).toContain('limit must be positive')
+    const dialog = await openAdd()
+    fireEvent.change(within(dialog).getByLabelText(label('settings.budget.amount')), { target: { value: '5' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: label('settings.save') }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('limit must be positive')
+    expect(screen.getByRole('dialog')).toBeTruthy()
   })
 
-  it('lists existing budgets and removes one', async () => {
-    const budget: Budget = { id: 'b1', period: 'day', scope: { workspaceId: 'w1' }, limit: { amount: '5', currency: 'USD' } }
+  it('edits a budget under its own id and deletes one from the ⋯ menu', async () => {
+    const budget: Budget = { id: 'b1', period: 'day', scope: {}, limit: { amount: '10', currency: 'CNY' } }
     const view = mount({ budgets: [budget] })
-    const row = await screen.findByText(/w1/)
-    expect(row.textContent).toBe(t('budget.nameWorkspace', { period: zh['budget.day'], limit: '$5', workspace: 'w1' }))
-    expect(row.textContent).not.toContain('b1')
-    fireEvent.click(within(row.closest('li')!).getByRole('button', { name: label('settings.remove') }))
+    const row = (await screen.findByText(`${label('settings.budget.day')} · ${label('settings.budget.allWorkspaces')}`)).closest('[data-tally="budget-row"]') as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: label('settings.more') }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: label('settings.budget.edit') }))
+    const dialog = screen.getByRole('dialog', { name: label('settings.budget.edit') })
+    expect((within(dialog).getByLabelText(label('settings.budget.amount')) as HTMLInputElement).value).toBe('10')
+    fireEvent.change(within(dialog).getByLabelText(label('settings.budget.amount')), { target: { value: '12' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: label('settings.save') }))
+    await waitFor(() => { expect(view.remote.setBudget).toHaveBeenCalledWith({ id: 'b1', period: 'day', scope: {}, limit: { amount: '12', currency: 'CNY' } }) })
+    fireEvent.click(within(row).getByRole('button', { name: label('settings.more') }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: label('settings.remove') }))
     await waitFor(() => { expect(view.remote.removeBudget).toHaveBeenCalledWith({ id: 'b1' }) })
   })
 })
 
 describe('element switches', () => {
+  it('describes what each switch controls', async () => {
+    mount()
+    for (const hint of [
+      '显示今日、本月费用和预算进度',
+      '在每轮回复末尾显示本轮费用',
+      '在会话标题旁显示本会话累计',
+      '在右侧栏显示用量看板',
+      '预算用到 80% 和 100% 时弹出提醒',
+    ]) expect(await screen.findByText(hint)).toBeTruthy()
+  })
+
   it('writes the switch that was turned off', async () => {
     const view = mount()
     fireEvent.click(await screen.findByRole('switch', { name: label('settings.element.turnTail') }))
@@ -254,7 +312,7 @@ describe('element switches', () => {
       removeBudget: vi.fn(async () => ok(undefined)),
       rebuild: vi.fn(async () => ok(undefined)),
     }
-    render(<Section {...({ remote, overridesForm: new ClassForm(), elementsForm: new ClassForm(), status, generation: observable(1), close: () => {}, t } as unknown as SectionProps)} />)
+    render(<Section {...({ remote: { ...remote, query: vi.fn(async () => ok([])) }, overridesForm: new ClassForm(), elementsForm: new ClassForm(), status, generation: observable(1), budgetSpend: observable({}), close: () => {}, t } as unknown as SectionProps)} />)
     const toggle = await screen.findByRole('switch', { name: label('settings.element.turnTail') })
     expect(toggle.getAttribute('aria-checked')).toBe('false')
   })

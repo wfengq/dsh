@@ -2,6 +2,7 @@ import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useState, type ReactNode } from 'react'
 import { ALL_ELEMENTS, type ElementName } from '../elements.ts'
 import type { T } from '../labels.ts'
+import { SettingsCard, SettingsRow } from './Card.tsx'
 import { readonlyReason, useSnapshot, writeField, type FormFace } from './form.ts'
 
 export type ElementsFace = FormFace<{ elements?: Partial<Record<ElementName, boolean>> }>
@@ -22,13 +23,17 @@ export function ElementSwitches({ form, t }: { form: ElementsFace; t: T }): Reac
     if (!accepted) setFailed(true)
   }
   return (
-    <section className="dsh-tally-settings-part" data-tally="elements">
-      <h3>{t('settings.elements')}</h3>
-      {reason !== null ? <p className="dsh-tally-hint" role="status">{t(reason)}</p> : null}
-      <ul className="dsh-tally-list">
-        {NAMES.map(name => (
-          <li key={name}>
-            <span>{t(`settings.element.${name}`)}</span>
+    <SettingsCard
+      title={t('settings.elements')}
+      tally="elements"
+      description={reason === null ? undefined : <span role="status">{t(reason)}</span>}
+    >
+      {NAMES.map(name => (
+        <SettingsRow
+          key={name}
+          label={t(`settings.element.${name}`)}
+          hint={t(`settings.element.${name}.hint`)}
+          control={(
             <Switch
               checked={view.value?.elements?.[name] !== false}
               label={t(`settings.element.${name}`)}
@@ -36,10 +41,10 @@ export function ElementSwitches({ form, t }: { form: ElementsFace; t: T }): Reac
               title={reason === null ? undefined : t(reason)}
               onChange={next => { void toggle(name, next) }}
             />
-          </li>
-        ))}
-      </ul>
-      {failed ? <p className="dsh-tally-error" role="alert">{t('settings.saveFailed')}</p> : null}
-    </section>
+          )}
+        />
+      ))}
+      {failed ? <SettingsRow label={<span className="dsh-tally-error" role="alert">{t('settings.saveFailed')}</span>} /> : null}
+    </SettingsCard>
   )
 }

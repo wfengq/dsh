@@ -143,6 +143,7 @@ export async function apply(ctx: Context): Promise<void> {
         elementsForm: scope.configForms.get<never>(ENTRY_ID),
         status: store.status,
         generation: store.generation,
+        budgetSpend: store.budgetSpend,
       }
       return scope.slots.register({
         name: SETTINGS_SECTION,
