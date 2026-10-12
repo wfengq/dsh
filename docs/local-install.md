@@ -4,7 +4,7 @@
 
 **桌面客户端和 `dsh web` 都能用。** 官方桌面客户端是在完整的 dsh Web 应用外面套了一层 Electron 壳，界面插件（`dsh-tally-ui`）看到的是同一套 Web 界面，所以费用条、看板、设置页在两边是一样的。区别只在安装命令的 profile 名：桌面客户端用 `desktop`，`dsh web` 用 `web`。
 
-web 端的步骤已经实际跑通：在一个空的 `DSH_HOME` 上安装，再用独立安装的 dsh `0.2.0-rc.2` 和 `0.2.1-alpha.2` 分别跑过界面端到端测试。桌面客户端的步骤按官方桌面端文档写成，还没有在真实的桌面客户端上试过。
+两种方式都实际跑通过：web 端在一个空的 `DSH_HOME` 上安装，再用独立安装的 dsh `0.2.0-rc.2` 和 `0.2.1-alpha.2` 分别跑过界面端到端测试；桌面客户端的步骤在 Windows 桌面客户端上装过并日常使用。
 
 ## 前提
 
@@ -17,7 +17,6 @@ web 端的步骤已经实际跑通：在一个空的 `DSH_HOME` 上安装，再�
 ```sh
 git clone https://github.com/wfengq/dsh.git dsh-tally
 cd dsh-tally
-git checkout claude/youthful-feynman-u9wr2w   # PR 合并后改用 main
 pnpm install
 pnpm run build
 ```
@@ -101,6 +100,22 @@ node packages/tally/lib/cli.js reconcile --bill ./bill.csv --format csv
 ```
 
 这个命令以后发布后就是 `dsh-tally reconcile`。完整选项用 `--help` 查看，说明见 [`packages/tally/README.md`](../packages/tally/README.md#对账)。
+
+## 更新
+
+插件是链接安装的，更新不用重装：
+
+1. 完全退出桌面客户端（或停掉 `dsh web`）。
+2. 在仓库目录运行：
+
+   ```sh
+   git checkout main
+   git pull
+   pnpm install
+   pnpm run build
+   ```
+
+3. 重新打开桌面客户端（或重新运行 `dsh web`）。
 
 ## 卸载
 
