@@ -22,6 +22,8 @@ dsh plugin --profile web add dsh-tally dsh-tally-ui dsh-tally-balance-deepseek
 
 只想在终端或 headless 模式下记账时，装 `dsh-tally` 一个包即可。
 
+还没有发布到 npm，目前请按 [本地安装步骤](docs/local-install.md) 从源码安装。
+
 ## 对账
 
 ```sh
