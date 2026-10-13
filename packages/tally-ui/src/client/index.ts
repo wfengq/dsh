@@ -23,6 +23,7 @@ import { Dashboard, type DashboardInjected } from './dashboard/Dashboard.tsx'
 import { tabDefinition, TAB_ID } from './dashboard/definition.ts'
 import { elementsOf, type ElementsFormSnapshot } from './elements.ts'
 import { en, NS, zh, type TallyLocaleKey } from './locales.ts'
+import { modelSplitQuery } from './model-split.ts'
 import { Section, type SectionInjected } from './settings/Section.tsx'
 import { SessionTotal, type SessionTotalInjected } from './SessionTotal.tsx'
 import { createTallyStore } from './store.ts'
@@ -106,7 +107,7 @@ export async function apply(ctx: Context): Promise<void> {
     )
     const canOpenDashboard = () => scope.get('sidebarRight') !== undefined && elements.getSnapshot().sidebarTab
     const loadModels: SessionTotalInjected['loadModels'] = sessionId =>
-      valueOf(remote.query({ from: 0, to: Date.now() + 1, groupBy: 'model', filter: { rootSessionId: sessionId } }))
+      valueOf(remote.query(modelSplitQuery(sessionId, Date.now())))
 
     scope.slots.inject(DOCK, () => scope.slots.register({
       name: DOCK,

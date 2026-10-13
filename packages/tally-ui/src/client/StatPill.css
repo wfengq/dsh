@@ -1,0 +1,103 @@
+/* Shared by the cost dock, the turn cost and the header session total (StatPill.tsx). */
+/* The pill matches dsh's own composer stat pills (ui-chat StatsPills.module.css). */
+.dsh-tally-pill-anchor { display: inline-flex; min-width: 0; max-width: 100%; }
+
+.dsh-tally-pill {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 1px 8px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  line-height: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dsh-tally-pill svg { flex: none; width: 14px; height: 14px; }
+.dsh-tally-pill:hover,
+.dsh-tally-pill[aria-expanded="true"] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-tally-pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* The details dialog matches dsh's own stat dialog (ui-chat stat-dialog.module.css). */
+.dsh-tally-stat-panel {
+  position: fixed;
+  z-index: 1100;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: min(300px, 100vw - 24px);
+  max-width: min(440px, 100vw - 24px);
+  padding: 16px;
+  border: 0;
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-specific-menu);
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+  box-shadow: var(--dsw-elevation-prominent);
+  color: var(--dsw-alias-label-secondary);
+  cursor: default;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dsh-tally-stat-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.dsh-tally-stat-title-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.dsh-tally-stat-title-label svg { flex: none; width: 14px; height: 14px; }
+.dsh-tally-stat-rule { margin-bottom: 10px; border-top: 0.5px solid var(--dsw-alias-border-l2); }
+
+/* The turn-tail action matches dsh's own turn usage button (ui-chat TurnUsagePanel.module.css). */
+.dsh-tally-pill-action {
+  gap: 4px;
+  height: calc(28px + var(--dsh-content-font-delta, 0px));
+  padding: 6px 8px;
+  border-radius: var(--dsw-radius-sm);
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+}
+
+.dsh-tally-pill-action svg { width: calc(15px + var(--dsh-content-font-delta, 0px)); height: calc(15px + var(--dsh-content-font-delta, 0px)); }
+.dsh-tally-pill-action:hover,
+.dsh-tally-pill-action[aria-expanded="true"] { color: var(--dsw-alias-label-tertiary); }
+
+/* The header button keeps the header's text size; it highlights like the other two. */
+.dsh-tally-pill-header {
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--dsw-radius-sm, 8px);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* Two-column details, as in dsh's own stat dialog. */
+.dsh-tally-stat-details {
+  display: grid;
+  grid-template-columns: minmax(76px, auto) minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-tally-stat-details dt,
+.dsh-tally-stat-details dd { min-width: 0; margin: 0; }
+.dsh-tally-stat-details dd { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; text-align: right; }
+.dsh-tally-stat-details a { color: var(--dsw-alias-link); }
+.dsh-tally-num { font-variant-numeric: tabular-nums; }
