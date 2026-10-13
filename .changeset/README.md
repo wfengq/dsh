@@ -8,7 +8,7 @@ pnpm changeset
 
 版本号和 CHANGELOG 由 `pnpm changeset version` 统一生成。
 
-首个版本是预览版 `0.1.0-beta.0`，直接写在各包的 `version` 里，不经 `changeset version` 提升：在 0.x 阶段，次版本号的提升会超出各包之间 `^0.1.0` 的依赖范围，changesets 会因此把依赖它的包连带升到主版本。各包的 `publishConfig.tag` 是 `beta`，所以发布不会落到 `latest` 标签上。
+预览版（`0.1.0-beta.0`，2026-10-13 发布；`0.1.0-beta.1`）的版本号直接写在各包的 `version` 里，不经 `changeset version` 提升：在 0.x 阶段，次版本号的提升会超出各包之间 `^0.1.0` 的依赖范围，changesets 会因此把依赖它的包连带升到主版本。各包的 `publishConfig.tag` 是 `beta`，所以发布不会落到 `latest` 标签上。
 
 发布由仓库所有者在自己的机器上运行（需要先 `npm login`）：
 
