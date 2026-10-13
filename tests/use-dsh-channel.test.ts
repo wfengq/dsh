@@ -18,7 +18,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'dsh-channel-'))
   write(join(root, 'package.json'), { devDependencies: { '@deepseek-ai/dsh': '0.2.0-rc.2', vitest: '^3' } })
   write(join(root, 'packages/a/package.json'), {
-    peerDependencies: { '@deepseek-ai/dsh-session': '>=0.2.0-0 <0.3.0-0', '@deepseek-ai/cordis': '>=4.0.4-0 <4.1.0-0' },
+    peerDependencies: { '@deepseek-ai/dsh-session': '>=0.2.0-0 <0.3.0-0 || >=0.2.1-0 <0.3.0-0', '@deepseek-ai/cordis': '>=4.0.4-0 <4.1.0-0 || >=4.0.5-0 <4.1.0-0' },
     devDependencies: { '@deepseek-ai/dsh-session': '0.2.0-rc.2', '@deepseek-ai/cordis': '4.0.4', 'dsh-tally-api': 'workspace:^' },
   })
   write(join(root, 'packages/b/package.json'), {
@@ -44,7 +44,7 @@ describe('use-dsh-channel', () => {
     expect(read(join(root, 'package.json')).devDependencies).toEqual({ '@deepseek-ai/dsh': '0.2.1-alpha.2', vitest: '^3' })
     const a = read(join(root, 'packages/a/package.json'))
     expect(a.devDependencies).toEqual({ '@deepseek-ai/dsh-session': '0.2.1-alpha.2', '@deepseek-ai/cordis': '4.0.5-alpha.1', 'dsh-tally-api': 'workspace:^' })
-    expect(a.peerDependencies).toEqual({ '@deepseek-ai/dsh-session': '>=0.2.0-0 <0.3.0-0', '@deepseek-ai/cordis': '>=4.0.4-0 <4.1.0-0' })
+    expect(a.peerDependencies).toEqual({ '@deepseek-ai/dsh-session': '>=0.2.0-0 <0.3.0-0 || >=0.2.1-0 <0.3.0-0', '@deepseek-ai/cordis': '>=4.0.4-0 <4.1.0-0 || >=4.0.5-0 <4.1.0-0' })
     expect(read(join(root, 'packages/b/package.json')).devDependencies).toEqual({
       '@deepseek-ai/dsh-llm': '^0.2.0', '@deepseek-ai/cosmokit': '1.8.6-alpha.1', '@deepseek-ai/schemastery': '3.18.5-alpha.1',
       '@deepseek-ai/cordis-plugin-loader': '1.0.6-alpha.1', '@deepseek-ai/cordis-plugin-timer': '1.1.6',
@@ -78,5 +78,24 @@ describe('use-dsh-channel guards', () => {
     expect(r.status).toBe(3)
     expect(r.stderr).toContain('@deepseek-ai/dsh-session')
     expect(r.stderr).toContain('>=0.2.0-0 <0.3.0-0')
+  })
+
+  // npm only lets a prerelease satisfy a range whose comparator carries a prerelease tag on the same
+  // major.minor.patch: `>=0.2.0-0 <0.3.0-0` looks wide but rejects 0.2.1-alpha.2.
+  it('fails when an alpha on a newer patch is outside a range that has no prerelease branch for it', () => {
+    write(join(root, 'packages/c/package.json'), { peerDependencies: { '@deepseek-ai/dsh-llm': '>=0.2.0-0 <0.3.0-0' } })
+    const r = run('alpha', '--registry-version', '0.2.1-alpha.2', '--framework', '@deepseek-ai/cordis=~4.0.5-alpha.1')
+    expect(r.status).toBe(3)
+    expect(r.stderr).toContain('@deepseek-ai/dsh-llm >=0.2.0-0 <0.3.0-0')
+    expect(r.stderr).not.toContain('dsh-session')
+  })
+
+  it('checks framework peer ranges against the framework version the channel pins', () => {
+    write(join(root, 'packages/c/package.json'), { peerDependencies: { '@deepseek-ai/schemastery': '>=3.18.4-0 <3.19.0-0' } })
+    const r = run('alpha', '--registry-version', '0.2.1-alpha.2',
+      '--framework', '@deepseek-ai/cordis=~4.0.5-alpha.1', '--framework', '@deepseek-ai/schemastery=~3.18.5-alpha.1')
+    expect(r.status).toBe(3)
+    expect(r.stderr).toContain('@deepseek-ai/schemastery >=3.18.4-0 <3.19.0-0')
+    expect(r.stderr).toContain('3.18.5-alpha.1')
   })
 })

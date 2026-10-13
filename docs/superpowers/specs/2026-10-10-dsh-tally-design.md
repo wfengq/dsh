@@ -297,7 +297,7 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 - 用 changesets 管理版本，发布到 npm；提交到 awesome-dsh-plugin 和 dsh-market。
   - 2026-10-11 决定：所有往外部仓库或外部平台提交的动作（npm 发布、awesome-dsh-plugin / dsh-market 收录、`dsh-pricing-data` 单独推广）暂缓，等其余功能实现后再决定。计划 4 只做发布前的准备（版本管理、README、扫描结果），不实际提交。
   - 2026-10-13 决定：做以下三件，顺序和时机如下，每一步都由仓库所有者用自己的账号执行：
-    1. npm 发布预览版 `0.1.0-beta.0`（`beta` 标签），时间由仓库所有者决定；准备已在 2026-10-12 完成。
+    1. npm 发布预览版 `0.1.0-beta.0`（`beta` 标签），时间由仓库所有者决定；准备已在 2026-10-12 完成。2026-10-13 已发布；`0.1.0-beta.1` 修正 peer 范围（接受 dsh 0.2.1 的 alpha）后再提交 awesome-dsh-plugin。
     2. npm 发布后自用约一周没有问题，再向 awesome-dsh-plugin 提交收录。
     3. dsh 0.2 正式版发布、本项目发布 `0.1.0` 正式版之后，再提交 dsh-market。
 - README 中贴出 dsh-trust-check 对五个包的扫描结果，并说明为什么 balance-deepseek 这个包有红线、它的代码范围有多大。

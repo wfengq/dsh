@@ -63,11 +63,20 @@ function compareVersions(a, b) {
   return 0
 }
 
-/** Does `v` satisfy a `>=A <B` range (the only form our peer ranges use)? `undefined` for other forms. */
+/**
+ * Does `v` satisfy a range made of `>=A <B` sets joined by `||` (the only form our peer ranges use)?
+ * `undefined` for other forms. Follows npm's prerelease rule: a prerelease version only satisfies a
+ * set that has a comparator with a prerelease tag on the same major.minor.patch, so `>=0.2.0-0 <0.3.0-0`
+ * accepts 0.2.0-rc.2 but not 0.2.1-alpha.2.
+ */
 function inRange(v, range) {
-  const m = /^>=\s*(\S+)\s+<\s*(\S+)$/.exec(range.trim())
-  if (!m) return undefined
-  return compareVersions(v, m[1]) >= 0 && compareVersions(v, m[2]) < 0
+  const sets = range.split('||').map(set => /^>=\s*(\S+)\s+<\s*(\S+)$/.exec(set.trim()))
+  if (sets.some(m => m === null)) return undefined
+  const core = (x) => x.split('-')[0]
+  const prerelease = v.includes('-')
+  return sets.some(([, low, high]) =>
+    compareVersions(v, low) >= 0 && compareVersions(v, high) < 0
+    && (!prerelease || [low, high].some(c => c.includes('-') && core(c) === core(v))))
 }
 
 /** Framework package → declared range, from --framework flags (tests) or the registry. */
@@ -103,18 +112,24 @@ if (existsSync(packagesDir)) {
   }
 }
 
-// The channel must fall inside the dsh peer ranges our packages publish, or CI would pass on a
-// combination real installs reject.
-const outside = []
-for (const path of manifests) {
-  for (const [name, range] of Object.entries(JSON.parse(readFileSync(path, 'utf8')).peerDependencies ?? {})) {
-    if (DSH.test(name) && inRange(version, range) === false) outside.push(`${name} ${range}（${path}）`)
+// The channel must fall inside the peer ranges our packages publish (dsh packages at the channel's dsh
+// version, framework packages at the version the channel pins), or CI would pass on a combination real
+// installs reject. The dsh ranges are checked before the framework versions are looked up.
+function checkPeers(pinnedOf) {
+  const outside = []
+  for (const path of manifests) {
+    for (const [name, range] of Object.entries(JSON.parse(readFileSync(path, 'utf8')).peerDependencies ?? {})) {
+      const pinned = pinnedOf(name)
+      if (pinned !== undefined && inRange(pinned, range) === false) outside.push(`${name} ${range} 不接受 ${pinned}（${path}）`)
+    }
   }
+  if (outside.length > 0) fail(3, `dsh ${tag}（${version}）的版本不在本仓库声明的 peer 范围内：\n  ${outside.join('\n  ')}`)
 }
-if (outside.length > 0) fail(3, `dsh ${tag} 的版本 ${version} 不在本仓库声明的 peer 范围内：\n  ${outside.join('\n  ')}`)
+checkPeers(name => (DSH.test(name) ? version : undefined))
 
 const frameworks = frameworkRanges()
 for (const [name, range] of Object.entries(frameworks)) frameworks[name] = minimum(name, range)
+checkPeers(name => (DSH.test(name) ? undefined : frameworks[name]))
 
 let changed = 0
 for (const path of manifests) {

@@ -1,6 +1,6 @@
 {
   "name": "dsh-tally-balance-deepseek",
-  "version": "0.1.0-beta.0",
+  "version": "0.1.0-beta.1",
   "description": "为 dsh-tally 提供 DeepSeek 余额查询（API key 与官方账号两种方式）",
   "keywords": [
     "dsh",
@@ -45,10 +45,10 @@
     "dsh-tally-api": "workspace:^"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": ">=4.0.4-0 <4.1.0-0",
-    "@deepseek-ai/dsh-credentials": ">=0.2.0-0 <0.3.0-0",
-    "@deepseek-ai/dsh-deepseek-account": ">=0.2.0-0 <0.3.0-0",
-    "@deepseek-ai/schemastery": ">=3.18.4-0 <3.19.0-0"
+    "@deepseek-ai/cordis": ">=4.0.4-0 <4.1.0-0 || >=4.0.5-0 <4.1.0-0",
+    "@deepseek-ai/dsh-credentials": ">=0.2.0-0 <0.3.0-0 || >=0.2.1-0 <0.3.0-0",
+    "@deepseek-ai/dsh-deepseek-account": ">=0.2.0-0 <0.3.0-0 || >=0.2.1-0 <0.3.0-0",
+    "@deepseek-ai/schemastery": ">=3.18.4-0 <3.19.0-0 || >=3.18.5-0 <3.19.0-0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",

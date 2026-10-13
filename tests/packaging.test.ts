@@ -78,7 +78,7 @@ describe.each(Object.entries(PACKAGES))('package %s', (dir, entries) => {
     expect(manifest.bugs).toBe('https://github.com/wfengq/dsh/issues')
     // A preview until dsh 0.2 is final: `npm publish` puts it under the beta tag, never latest.
     expect(manifest.publishConfig).toEqual({ access: 'public', tag: 'beta' })
-    expect(manifest.version).toBe('0.1.0-beta.0')
+    expect(manifest.version).toBe('0.1.0-beta.1')
   })
 })
 
