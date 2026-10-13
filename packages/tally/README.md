@@ -368,7 +368,7 @@ DeepSeek 开放平台导出的账单是一个 ZIP，里面有两张表，作用�
 
 **退出码**：0 表示全部在容差内；1 表示有超出容差的行，或者账单中有无法解析的行；2 表示参数或文件错误。
 
-`dsh plugin add` 不会把命令加入 PATH。在插件安装目录下可以用 `node <dsh-tally 安装目录>/lib/cli.js reconcile …` 运行；发布到 npm 后也可以用 `npx dsh-tally reconcile …`。
+`dsh plugin add` 不会把命令加入 PATH，请用 `npx dsh-tally@beta reconcile …` 运行（npx 会一并装好它依赖的 dsh 包）。不要直接用 `node` 运行插件目录里的 `lib/cli.js`：那些 dsh 包由 dsh 自己提供，不在插件目录下，会报找不到模块。从源码安装时，在仓库根目录用 `node packages/tally/lib/cli.js reconcile …`。
 
 **超出容差时的提示**：
 

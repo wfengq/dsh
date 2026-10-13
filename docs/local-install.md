@@ -99,7 +99,7 @@ dsh --profile web --dump-config | grep -A1 "id: tally"
 node packages/tally/lib/cli.js reconcile --bill ./bill.csv --format csv
 ```
 
-这个命令以后发布后就是 `dsh-tally reconcile`。完整选项用 `--help` 查看，说明见 [`packages/tally/README.md`](../packages/tally/README.md#对账)。
+从 npm 安装的用户用 `npx dsh-tally@beta reconcile …`。完整选项用 `--help` 查看，说明见 [`packages/tally/README.md`](../packages/tally/README.md#对账)。
 
 ## 更新
 

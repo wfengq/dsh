@@ -53,7 +53,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p . && tsc -p tsconfig.client.json && tsdown",
+    "build": "node ../../scripts/clean-lib.mjs && tsc -p . && tsc -p tsconfig.client.json && tsdown",
     "typecheck": "tsc -p . --noEmit && tsc -p tsconfig.client.json --noEmit"
   },
   "peerDependencies": {
