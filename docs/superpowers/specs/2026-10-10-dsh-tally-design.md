@@ -290,14 +290,20 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 
 - 提供命令行工具 `dsh-tally reconcile --bill <账单导出文件>`，按天和模型对比我们算出的金额与账单金额，输出差异报告。账单解析器做成可插拔的。
 - 对账方法和误差说明写进 README；用真实账号长期对账并公开结果。
+  - 2026-10-13 决定：不公开对账结果。对账只作为维护者自己核对计价准确性的工具。
 
 ## 9. 发布与推广
 
 - 用 changesets 管理版本，发布到 npm；提交到 awesome-dsh-plugin 和 dsh-market。
   - 2026-10-11 决定：所有往外部仓库或外部平台提交的动作（npm 发布、awesome-dsh-plugin / dsh-market 收录、`dsh-pricing-data` 单独推广）暂缓，等其余功能实现后再决定。计划 4 只做发布前的准备（版本管理、README、扫描结果），不实际提交。
+  - 2026-10-13 决定：做以下三件，顺序和时机如下，每一步都由仓库所有者用自己的账号执行：
+    1. npm 发布预览版 `0.1.0-beta.0`（`beta` 标签），时间由仓库所有者决定；准备已在 2026-10-12 完成。
+    2. npm 发布后自用约一周没有问题，再向 awesome-dsh-plugin 提交收录。
+    3. dsh 0.2 正式版发布、本项目发布 `0.1.0` 正式版之后，再提交 dsh-market。
 - README 中贴出 dsh-trust-check 对五个包的扫描结果，并说明为什么 balance-deepseek 这个包有红线、它的代码范围有多大。
 - ~~给现有插件提接入 PR~~：2026-10-11 决定不做。生态采用靠自带界面和公开文档（README 中的接入示例），不主动给其他作者的插件提 PR。
 - `dsh-pricing-data` 同时作为独立的数据包推广给其他 agent 生态的用量工具。
+  - 2026-10-13 决定：不做。价格表目前没有自动更新，对外推广等于承诺长期维护。
 
 ## 10. 里程碑
 
@@ -307,7 +313,7 @@ type BalanceFetcher = (signal: AbortSignal) => Promise<Wallet[]>
 | M2 | `dsh-tally-api` 和账本核心（记账、存储、回填、查询、Remote API） | 口径、幂等、重建一致性三类测试通过；在真实 dsh 中完成冒烟测试 |
 | M3 | 余额提供方和预算 | 在真实账号上能查到余额，预算提醒能触发 |
 | M4 | `dsh-tally-ui` | 5 个挂载位置在真实 dsh web 中验证通过 |
-| M5 | 对账工具、文档、发布 | 已发布到 npm，已收录进 awesome 列表 |
+| M5 | 对账工具、文档、发布 | 已发布到 npm（预览版），已收录进 awesome 列表；dsh-market 在正式版之后提交 |
 
 ## 11. 外部依赖与未决事项
 
