@@ -1,0 +1,6 @@
+# Check every text file out with LF, on Windows too: the build copies these files (and the CSS inside the
+# browser bundle) into the published packages, which must not depend on the platform they were built on.
+* text=auto eol=lf
+
+# Bill samples keep their bytes exactly (DeepSeek's exports use CRLF, and the parser is tested on that).
+packages/tally/tests/fixtures/** -text

@@ -47,7 +47,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p .",
+    "build": "node ../../scripts/clean-lib.mjs && tsc -p .",
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {

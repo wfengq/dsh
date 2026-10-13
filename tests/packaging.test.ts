@@ -1,5 +1,5 @@
 import { execFileSync, execSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -31,11 +31,26 @@ describe.each(Object.entries(PACKAGES))('package %s', (dir, entries) => {
     expect(files.filter(f => f.startsWith('src/') || f.startsWith('tests/') || /\.test\./.test(f))).toEqual([])
   })
 
-  it('ships no stale build output (every lib module comes from a current source file)', () => {
-    const stale = files.filter(f => /^lib\/.*\.js$/.test(f) && f !== 'lib/client.js')
-      .filter(f => !existsSync(`${root}packages/${dir}/src/${f.slice(4).replace(/\.js$/, '.ts')}`)
-        && !existsSync(`${root}packages/${dir}/src/${f.slice(4).replace(/\.js$/, '.tsx')}`))
+  it('ships no stale build output (every lib module and declaration comes from a current source file)', () => {
+    // lib/types/ holds the browser half's declarations (tsconfig.client.json), mirroring src/ like lib/ does.
+    const source = (f: string) => f.replace(/^lib\/(types\/)?/, '').replace(/\.(d\.ts|js)$/, '')
+    const stale = files.filter(f => /^lib\/.*\.(js|d\.ts)$/.test(f) && f !== 'lib/client.js')
+      .filter(f => !existsSync(`${root}packages/${dir}/src/${source(f)}.ts`) && !existsSync(`${root}packages/${dir}/src/${source(f)}.tsx`))
     expect(stale).toEqual([])
+  })
+
+  it('has no two source files whose names differ only in case (they would overwrite each other on Windows)', () => {
+    const sources = readdirSync(`${root}packages/${dir}/src`, { recursive: true, encoding: 'utf8' })
+      .map(f => f.replace(/\\/g, '/').replace(/\.tsx?$/, ''))
+    const seen = new Map<string, string>()
+    const clashes: string[] = []
+    for (const f of sources) {
+      const key = f.toLowerCase()
+      const other = seen.get(key)
+      if (other !== undefined && other !== f) clashes.push(`${other} / ${f}`)
+      seen.set(key, f)
+    }
+    expect(clashes).toEqual([])
   })
 
   it('publishes real version ranges instead of workspace: links', () => {
@@ -71,5 +86,19 @@ describe('dsh-tally-ui', () => {
   it('accepts the dsh-tally preview as its peer (a plain >=0.1.0 range excludes prereleases)', () => {
     const manifest = JSON.parse(readFileSync(`${root}packages/tally-ui/package.json`, 'utf8'))
     expect(manifest.peerDependencies['dsh-tally']).toBe('>=0.1.0-0 <0.2.0')
+  })
+})
+
+describe('repository', () => {
+  it('checks text files out with LF line endings on every platform, so Windows builds publish LF', () => {
+    const attributes = existsSync(`${root}.gitattributes`) ? readFileSync(`${root}.gitattributes`, 'utf8') : ''
+    expect(attributes).toMatch(/^\*\s+text=auto\s+eol=lf\s*$/m)
+  })
+
+  it('documents reconcile through npx, not through the plugin directory (its dsh peers are not there)', () => {
+    for (const readme of ['README.md', 'packages/tally/README.md', 'docs/local-install.md']) {
+      expect(readFileSync(`${root}${readme}`, 'utf8'), readme).not.toMatch(/node <dsh-tally 安装目录>\/lib\/cli\.js/)
+    }
+    expect(readFileSync(`${root}packages/tally/README.md`, 'utf8')).toContain('npx dsh-tally@beta reconcile')
   })
 })
