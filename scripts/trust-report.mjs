@@ -30,10 +30,11 @@ const table = [
   '|---|---|---|---|',
   ...PACKAGES.map(row),
 ].join('\n')
-const block = `${START}\n${table}\n${END}`
 
 const readmePath = `${root}README.md`
 const readme = readFileSync(readmePath, 'utf8')
+const newline = readme.includes('\r\n') ? '\r\n' : '\n'
+const block = [START, table.replaceAll('\n', newline), END].join(newline)
 const start = readme.indexOf(START)
 const end = readme.indexOf(END)
 if (start < 0 || end < start) {

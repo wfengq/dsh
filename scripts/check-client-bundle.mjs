@@ -39,7 +39,9 @@ if (forbidden.length > 0) {
   process.exit(1)
 }
 const checkout = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const leaks = [file, `${file}.map`].filter(path => existsSync(path) && readFileSync(path, 'utf8').includes(checkout))
+const checkoutPaths = [checkout, checkout.replaceAll('\\', '/'), JSON.stringify(checkout).slice(1, -1)]
+const leaks = [file, `${file}.map`].filter(path => existsSync(path)
+  && checkoutPaths.some(spelling => readFileSync(path, 'utf8').includes(spelling)))
 if (leaks.length > 0) {
   console.error(`contains the absolute checkout path ${checkout}:`)
   for (const path of leaks) console.error(`  ${path}`)
