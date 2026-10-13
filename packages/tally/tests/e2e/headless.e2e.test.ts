@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { createRequire } from 'node:module'
@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startMockLlmServer, type MockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
+import { exited, killTree, removeDir, spawnTree } from '../../../../tests/support/process-tree.ts'
 import { loadCatalog } from 'dsh-pricing-data'
 import type { ProviderPriceOverride } from 'dsh-tally-api'
 import { Config } from '../../src/index.js'
@@ -47,16 +48,6 @@ interface RunResult {
 
 const children = new Set<ChildProcess>()
 
-/** SIGKILL the child's whole process group, so grandchildren holding stdio open die with it. */
-function killGroup(child: ChildProcess): void {
-  if (child.pid === undefined) return
-  try {
-    process.kill(-child.pid, 'SIGKILL')
-  } catch {
-    // ESRCH: the group is already gone.
-  }
-}
-
 /**
  * Run a command in its own process group. The group is killed on timeout and once the
  * direct child exited, so a lingering grandchild can neither outlive the test nor keep
@@ -64,15 +55,15 @@ function killGroup(child: ChildProcess): void {
  */
 function run(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<RunResult> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd: repoRoot, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawnTree(command, args, { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] })
     children.add(child)
     let stdout = ''
     let stderr = ''
     child.stdout!.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
     child.stderr!.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
     const timer = setTimeout(() => {
-      stderr += `\n[e2e: killed process group after ${RUN_TIMEOUT}ms]`
-      killGroup(child)
+      stderr += `\n[e2e: killed process tree after ${RUN_TIMEOUT}ms]`
+      killTree(child)
     }, RUN_TIMEOUT)
     const settle = (code: number | null, signal: NodeJS.Signals | null) => {
       clearTimeout(timer)
@@ -84,7 +75,7 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<R
       settle(null, null)
     })
     // Once the direct child exited, anything left in its group is a straggler holding stdio open.
-    child.on('exit', () => killGroup(child))
+    child.on('exit', () => killTree(child))
     child.on('close', settle)
   })
 }
@@ -121,10 +112,13 @@ describe('dsh-tally in the real dsh headless profile', () => {
   })
 
   afterAll(async () => {
-    for (const child of children) killGroup(child)
+    // End every process tree and wait for it before removing the home its processes hold open.
+    const running = [...children]
+    for (const child of running) killTree(child)
+    await Promise.all(running.map(exited))
     children.clear()
     await server?.close()
-    if (home) rmSync(home, { recursive: true, force: true })
+    if (home) await removeDir(home)
   })
 
   const headless = (task: string) =>

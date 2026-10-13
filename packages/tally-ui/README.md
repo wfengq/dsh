@@ -88,7 +88,7 @@ dsh plugin --profile web add dsh-tally@beta dsh-tally-ui@beta
 ## 测试
 
 - `pnpm test`：组件和数据层的单元测试（jsdom），以及 bundle 共享模块检查。
-- `pnpm test:e2e`：在真实的 `dsh --profile web` 中，用 Chromium 依次验证费用条（含与 dsh 自带统计按钮的外观和交互一致）、本轮费用（含点击详情，样式与 dsh 自带按钮一致）、会话累计、余额（含刷新失败后的“已过期”）、用量看板（含 CSV 下载）、设置页（新建预算后出现预算提醒、关闭 `turnTail` 后新一轮不再显示本轮费用）以及页面重新加载后数值不变；全过程页面没有 `console.error`，dsh 的 stderr 没有 `ExperimentalWarning` 和 `failed to import`。模型请求由 `@deepseek-ai/dsh-llm-mock-server` 应答，余额由测试内的本地服务应答。
+- `pnpm test:e2e`：在真实的 `dsh --profile web` 中，用 Chromium 依次验证费用条（含与 dsh 自带统计按钮的外观和交互一致）、本轮费用（含点击详情，样式与 dsh 自带按钮一致）、会话累计、余额（含刷新失败后的“已过期”）、用量看板（含 CSV 下载）、设置页（新建预算后出现预算提醒、关闭 `turnTail` 后新一轮不再显示本轮费用）以及页面重新加载后数值不变；全过程页面没有 `console.error`，dsh 的 stderr 没有 `ExperimentalWarning` 和 `failed to import`。模型请求由 `@deepseek-ai/dsh-llm-mock-server` 应答，余额由测试内的本地服务应答。测试固定使用网页内的目录选择器（不弹出系统文件夹窗口），所以在 Windows、macOS 和 Linux 上行为一致。本机第一次运行前需要装一次 Playwright 的浏览器：`pnpm exec playwright install chromium`。
 
 ## 许可证
 
