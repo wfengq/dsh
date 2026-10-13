@@ -333,7 +333,7 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
 
   it('makes the cost pill look and act like the native stat pills beside it', async () => {
     const pill = tally('dock').locator('.dsh-tally-pill')
-    const native = page.locator('[data-composer-stats] button').first()
+    const native = page.locator('[data-composer-stats] button, [data-composer-stat] button').first()
     await native.waitFor({ timeout: 10_000 })
     const look = (locator: typeof pill) => locator.evaluate((node) => {
       const style = getComputedStyle(node)
