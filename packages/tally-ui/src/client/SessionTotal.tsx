@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionView, UsageGroup } from 'dsh-tally-api'
-import { Details } from './Details.tsx'
 import type { Elements } from './elements.ts'
 import { costLabel, type T } from './labels.ts'
+import { StatPill } from './StatPill.tsx'
 import type { Snapshot } from './store.ts'
 import './SessionTotal.css'
 
@@ -46,8 +46,9 @@ function ModelSplit({ sessionId, loadModels, t }: { sessionId: string; loadModel
 }
 
 /**
- * Session header total, subagents included. Hovering splits it by model and lists the subagent sessions;
- * clicking opens the usage dashboard on this session. Shows `—` until the session has entries, never a zero.
+ * Session header total, subagents included. Like the stat buttons below the composer, a click toggles its
+ * details below it: the split by model, the subagent sessions and a way to the usage dashboard on this
+ * session. Shows `—` until the session has entries, never a zero.
  */
 export function SessionTotal({ useElements, useSession, sessionId, loadModels, openDashboard, canOpenDashboard, t }: SessionTotalProps): ReactNode {
   const enabled = useElements((e: Elements) => e.headerUtilities)
@@ -57,25 +58,8 @@ export function SessionTotal({ useElements, useSession, sessionId, loadModels, o
   const hasEntries = session !== null && session.usage.total.requestCount > 0
   const total = hasEntries ? costLabel(session.usage.total, t) : '—'
   const children = session?.usage.children ?? []
-  const button = (
-    <button
-      type="button"
-      className="dsh-tally-total-button"
-      data-tally="total"
-      aria-label={`${t('header.total')} ${total}`}
-      data-can-open={canOpen}
-      onClick={() => { if (canOpen) openDashboard(sessionId) }}
-    >
-      <span className="dsh-tally-label">{t('dock.session')}</span>
-      <span className="dsh-tally-num">{total}</span>
-    </button>
-  )
-  const card = (
+  const card = (close: () => void) => (
     <div className="dsh-tally-total-card">
-      <div className="dsh-tally-total-head">
-        <span>{t('header.total')}</span>
-        <span className="dsh-tally-num">{total}</span>
-      </div>
       {hasEntries ? <ModelSplit sessionId={sessionId} loadModels={loadModels} t={t} /> : null}
       {children.length > 0
         ? (
@@ -90,11 +74,29 @@ export function SessionTotal({ useElements, useSession, sessionId, loadModels, o
             </>
           )
         : null}
+      {canOpen ? <button type="button" className="dsh-tally-link" onClick={() => { close(); openDashboard(sessionId) }}>{t('dock.openDashboard')}</button> : null}
     </div>
   )
   return (
     <span className="dsh-tally-total">
-      <Details anchor={button} content={card} label={t('header.total')} />
+      <StatPill
+        variant="header"
+        side="bottom"
+        align="end"
+        tally="total"
+        label={(
+          <>
+            <span className="dsh-tally-label">{t('dock.session')}</span>
+            {' '}
+            <span className="dsh-tally-num">{total}</span>
+          </>
+        )}
+        ariaLabel={`${t('header.total')} ${total}`}
+        title={t('header.total')}
+        titleValue={total}
+      >
+        {card}
+      </StatPill>
     </span>
   )
 }

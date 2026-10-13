@@ -1,10 +1,10 @@
-import { HoverCard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogView, TallyEntry, TurnUsage, UsageGroup } from 'dsh-tally-api'
 import type { Elements } from './elements.ts'
 import { formatTokens, hitRate } from './format.ts'
 import { costLabel, FORMAT_LOCALE, isWebUrl, type T } from './labels.ts'
+import { StatPill } from './StatPill.tsx'
 import type { Snapshot } from './store.ts'
 import './TurnCost.css'
 
@@ -35,8 +35,8 @@ interface TurnRange {
 export type TurnCostProps = TurnRange & InjectFace<TurnCostInjected> & { t: T }
 
 /**
- * Cost of one finished turn at its tail, with token, cache and price details on hover. Renders
- * nothing for a turn that has not ended or has no entries.
+ * Cost of one finished turn at its tail, beside dsh's own turn usage button and working like it: a click
+ * toggles the token, cache and price details. Renders nothing for a turn that has not ended or has no entries.
  */
 export function TurnCost({ turn, sessionId, useElements, useToday, useGeneration, loadTurn, catalog, t }: TurnCostProps): ReactNode {
   const enabled = useElements((e: Elements) => e.turnTail)
@@ -77,7 +77,7 @@ export function TurnCost({ turn, sessionId, useElements, useToday, useGeneration
   if (!enabled || fromSeq === undefined || toSeq === undefined || !found) return null
   const rate = hitRate(usage.total.tokens)
   const details = (
-    <dl className="dsh-tally-turn-details">
+    <dl className="dsh-tally-stat-details dsh-tally-turn-details">
       <dt>{t('turn.input')}</dt>
       <dd className="dsh-tally-num">{formatTokens(usage.total.tokens.input, FORMAT_LOCALE)}</dd>
       <dt>{t('turn.cacheRead')}</dt>
@@ -92,19 +92,25 @@ export function TurnCost({ turn, sessionId, useElements, useToday, useGeneration
       <dd>{priceVersions(usage.attempts, sources)}</dd>
     </dl>
   )
+  const cost = costLabel(usage.total, t)
   return (
     <div className="dsh-tally-turn">
-      <HoverCard
-        variant="compact"
-        openDelayMs={200}
-        anchor={(
-          <span className="dsh-tally-turn-anchor" data-tally="turn" tabIndex={0}>
+      <StatPill
+        variant="action"
+        tally="turn"
+        label={(
+          <>
             <span className="dsh-tally-label">{t('turn.cost')}</span>
-            <span className="dsh-tally-num">{costLabel(usage.total, t)}</span>
-          </span>
+            {' '}
+            <span className="dsh-tally-num">{cost}</span>
+          </>
         )}
-        content={details}
-      />
+        ariaLabel={`${t('turn.cost')} ${cost}`}
+        title={t('turn.cost')}
+        titleValue={cost}
+      >
+        {() => details}
+      </StatPill>
     </div>
   )
 }

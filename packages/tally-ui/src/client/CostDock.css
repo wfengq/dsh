@@ -10,36 +10,6 @@
   line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
 }
 
-/* The pill matches dsh's own composer stat pills (ui-chat StatsPills.module.css). */
-.dsh-tally-pill-anchor { display: inline-flex; min-width: 0; max-width: 100%; }
-
-.dsh-tally-pill {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  padding: 1px 8px;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-  line-height: inherit;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.dsh-tally-pill svg { flex: none; width: 14px; height: 14px; }
-.dsh-tally-pill:hover,
-.dsh-tally-pill[aria-expanded="true"] {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.dsh-tally-pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-
 .dsh-tally-dock-bar {
   display: flex;
   align-items: center;
@@ -47,40 +17,6 @@
   overflow: hidden;
   white-space: nowrap;
 }
-
-/* The details dialog matches dsh's own stat dialog (ui-chat stat-dialog.module.css). */
-.dsh-tally-stat-panel {
-  position: fixed;
-  z-index: 1100;
-  box-sizing: border-box;
-  width: max-content;
-  min-width: min(300px, 100vw - 24px);
-  max-width: min(440px, 100vw - 24px);
-  padding: 16px;
-  border: 0;
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-specific-menu);
-  backdrop-filter: var(--dsw-menu-backdrop-filter);
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  box-shadow: var(--dsw-elevation-prominent);
-  color: var(--dsw-alias-label-secondary);
-  cursor: default;
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.dsh-tally-stat-title {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 8px;
-  color: var(--dsw-alias-label-primary);
-  font-weight: 500;
-}
-
-.dsh-tally-stat-title-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.dsh-tally-stat-title-label svg { flex: none; width: 14px; height: 14px; }
-.dsh-tally-stat-rule { margin-bottom: 10px; border-top: 0.5px solid var(--dsw-alias-border-l2); }
 
 .dsh-tally-dock-item {
   display: inline-flex;
@@ -158,9 +94,5 @@
 .dsh-tally-dock-item[data-tally-item="band"] { min-width: 0; flex-shrink: 1; }
 .dsh-tally-dock-item[data-tally-item="band"] .dsh-tally-num { overflow: hidden; text-overflow: ellipsis; }
 
-
-/* The header session total still opens its details on hover (Details.tsx). */
-.dsh-tally-details { display: inline-flex; max-width: 100%; }
-.dsh-tally-details-panel { z-index: 50; padding: 8px 12px; }
 
 .dsh-tally-dock-card .dsh-tally-link { align-self: flex-start; margin-top: 4px; }

@@ -1,6 +1,7 @@
 import { useAnchoredPosition, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import './StatPill.css'
 
 /** Same distances as dsh's own composer stat pills (`ui-chat` `stat-dialog`). */
 const PANEL_GAP = 8
@@ -18,21 +19,27 @@ export function CostIcon(): ReactNode {
 }
 
 /**
- * A composer stat pill that behaves like dsh's own ("3 轮 58 步", "4.6M tok"): an icon and a label on a
- * round pill that highlights on hover and while open; a click toggles a details dialog above it, and
- * Escape or a press anywhere else closes it. Hovering opens nothing. `children` renders the dialog body
- * and gets `close` for actions that leave it.
+ * A stat trigger that behaves like dsh's own ("3 轮 58 步", "4.6M tok", a turn's "Usage 26 tok"): an icon
+ * and a label that highlight on hover and while open; a click toggles a details dialog beside it, and
+ * Escape or a press anywhere else closes it. Hovering opens nothing. `variant` picks the look: the round
+ * composer pill, the turn-tail action, or the header button. `children` renders the dialog body and gets
+ * `close` for actions that leave it.
  */
-export function StatPill({ label, ariaLabel, title, children }: {
+export function StatPill({ label, ariaLabel, title, titleValue, variant = 'pill', side = 'top', align, tally, children }: {
   label: ReactNode
   ariaLabel: string
   title: string
+  titleValue?: ReactNode
+  variant?: 'pill' | 'action' | 'header'
+  side?: 'top' | 'bottom'
+  align?: 'start' | 'end'
+  tally?: string
   children: (close: () => void) => ReactNode
 }): ReactNode {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLSpanElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  const pos = useAnchoredPosition({ open, anchorRef: rootRef, panelRef, side: 'top', gap: PANEL_GAP, margin: PANEL_MARGIN })
+  const pos = useAnchoredPosition({ open, anchorRef: rootRef, panelRef, side, align, gap: PANEL_GAP, margin: PANEL_MARGIN })
   useDismissOnOutsidePointer(rootRef, open, setOpen, panelRef)
   useEffect(() => {
     if (!open) return
@@ -45,7 +52,8 @@ export function StatPill({ label, ariaLabel, title, children }: {
     <span ref={rootRef} className="dsh-tally-pill-anchor">
       <button
         type="button"
-        className="dsh-tally-pill"
+        className={`dsh-tally-pill dsh-tally-pill-${variant}`}
+        data-tally={tally}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={ariaLabel}
@@ -59,6 +67,7 @@ export function StatPill({ label, ariaLabel, title, children }: {
             <div ref={panelRef} className="dsh-tally-stat-panel" role="dialog" aria-label={title} style={{ position: 'fixed', ...(pos ?? MEASURE_STYLE) }}>
               <div className="dsh-tally-stat-title">
                 <span className="dsh-tally-stat-title-label"><CostIcon />{title}</span>
+                {titleValue === undefined ? null : <span className="dsh-tally-num">{titleValue}</span>}
               </div>
               <div className="dsh-tally-stat-rule" aria-hidden="true" />
               {children(() => { setOpen(false) })}

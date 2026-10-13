@@ -284,11 +284,31 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     expect(await dockItem('session').count()).toBe(0)
     await shot('01-conversation')
 
-    await tally('turn').first().hover()
+    await tally('turn').first().click()
     const details = page.locator('.dsh-tally-turn-details')
     await details.waitFor({ state: 'visible', timeout: 10_000 })
     expect(await details.innerText()).toMatch(/Hit rate\s+\d+%/)
     await shot('02-turn-details')
+    await page.keyboard.press('Escape')
+    await details.waitFor({ state: 'hidden', timeout: 10_000 })
+
+    // The turn cost looks like dsh's own turn usage button beside it.
+    const look = (locator: ReturnType<typeof page.locator>) => locator.evaluate((node) => {
+      const style = getComputedStyle(node)
+      return { fontSize: style.fontSize, height: node.getBoundingClientRect().height, padding: style.padding, radius: style.borderTopLeftRadius, color: style.color }
+    })
+    const nativeUsage = page.locator('button[aria-haspopup="dialog"]').filter({ hasText: /^Usage / }).last()
+    expect(await look(tally('turn').first())).toEqual(await look(nativeUsage))
+
+    // The header total opens its details below it.
+    await tally('total').click()
+    const sessionDetails = page.getByRole('dialog', { name: 'Session total' })
+    await sessionDetails.waitFor({ timeout: 10_000 })
+    // The split by model really loads (the query stays inside the server's 400-day limit).
+    await tally('model-row').first().waitFor({ timeout: 10_000 })
+    expect(await sessionDetails.innerText()).not.toContain('Could not load')
+    await shot('02b-session-details')
+    await page.keyboard.press('Escape')
     await page.mouse.move(0, 0)
   })
 

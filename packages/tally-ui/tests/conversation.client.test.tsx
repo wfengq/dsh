@@ -60,12 +60,6 @@ function dockProps(opts: {
   }
 }
 
-/** Rests the pointer on a details anchor long enough for its panel to open. */
-function hoverDetails(): void {
-  fireEvent.mouseEnter(document.querySelector('.dsh-tally-details')!)
-  act(() => { vi.advanceTimersByTime(500) })
-}
-
 async function settle() {
   await act(async () => { await vi.advanceTimersByTimeAsync(0) })
 }
@@ -267,16 +261,16 @@ function turnProps(usage: TurnUsage | null, extra: { elements?: Partial<Elements
 }
 
 describe('TurnCost', () => {
-  it('asks for the turn by its sequence range and shows hit rate, request count and the price source on hover', async () => {
+  it('asks for the turn by its sequence range and shows hit rate, request count and the price source on click', async () => {
     const usage: TurnUsage = { total: group([cny('0.004')]), attempts: [attempt(), attempt({ id: 'e2' })] }
     const props = turnProps(usage)
     render(<TurnCost {...props} />)
     await settle()
     expect(props.loadTurn).toHaveBeenCalledWith({ sessionId: 's1', fromSeq: 4, toSeq: 9 })
     expect(document.querySelector('[data-tally="turn"]')?.textContent).toContain('¥0.004')
-    fireEvent.mouseEnter(screen.getByTestId('hover-anchor'))
+    fireEvent.click(document.querySelector('[data-tally="turn"]')!)
     await settle()
-    const card = screen.getByTestId('hover-card')
+    const card = screen.getByRole('dialog', { name: zh['turn.cost'] })
     expect(card.textContent).toContain(zh['turn.hitRate'])
     expect(card.textContent).toContain('10%')
     expect(card.textContent).toContain(zh['turn.requests'])
@@ -284,6 +278,23 @@ describe('TurnCost', () => {
     const link = card.querySelector('a[data-tally="price-source"]')
     expect(link?.getAttribute('href')).toBe('https://example.com/pricing')
     expect(link?.textContent).toBe('deepseek-2026-09')
+  })
+
+  it('works like the native turn usage button: hovering opens nothing, a click toggles the details above it', async () => {
+    render(<TurnCost {...turnProps({ total: group([cny('0.004')]), attempts: [attempt()] })} />)
+    await settle()
+    const trigger = document.querySelector<HTMLElement>('button[data-tally="turn"]')!
+    expect(trigger.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(trigger.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+    fireEvent.mouseEnter(trigger)
+    act(() => { vi.advanceTimersByTime(2000) })
+    expect(screen.queryByRole('dialog', { name: zh['turn.cost'] })).toBeNull()
+    anchoredPlacements.length = 0
+    fireEvent.click(trigger)
+    expect(screen.getByRole('dialog', { name: zh['turn.cost'] }).textContent).toContain('¥0.004')
+    expect(anchoredPlacements.at(-1)).toEqual({ side: 'top', align: undefined })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: zh['turn.cost'] })).toBeNull()
   })
 
   it('asks again on every hello and shows the new price of a turn that had entries', async () => {
@@ -354,38 +365,40 @@ describe('SessionTotal', () => {
     />
   )
 
-  it('shows the session total and opens the dashboard on the session when clicked', async () => {
+  it('shows the session total and toggles its details below it on click, without leaving for the dashboard', async () => {
     const openDashboard = vi.fn()
     render(total(sessionView(group([cny('5')])), [], openDashboard))
-    const button = document.querySelector('[data-tally="total"]')!
+    const button = document.querySelector<HTMLElement>('[data-tally="total"]')!
     expect(button.textContent).toContain('¥5')
-    fireEvent.click(button)
-    expect(openDashboard).toHaveBeenCalledWith('s1')
-  })
-
-  it('opens its details below the header total', async () => {
-    render(total(sessionView(group([cny('5')]))))
+    expect(button.getAttribute('aria-haspopup')).toBe('dialog')
+    fireEvent.mouseEnter(button)
+    act(() => { vi.advanceTimersByTime(2000) })
+    expect(screen.queryByRole('dialog', { name: zh['header.total'] })).toBeNull()
     anchoredPlacements.length = 0
-    hoverDetails()
+    fireEvent.click(button)
     expect(screen.getByRole('dialog', { name: zh['header.total'] })).toBeTruthy()
-    expect(anchoredPlacements.at(-1)).toEqual({ side: 'bottom', align: 'start' })
+    expect(anchoredPlacements.at(-1)).toEqual({ side: 'bottom', align: 'end' })
+    expect(openDashboard).not.toHaveBeenCalled()
+    fireEvent.click(button)
+    expect(screen.queryByRole('dialog', { name: zh['header.total'] })).toBeNull()
   })
 
-  it('shows the subagent list to keyboard focus as well', async () => {
-    const view = sessionView(group([cny('5')]), [{ sessionId: 'sub-a', total: group([cny('1.25')]) }])
-    render(total(view))
-    fireEvent.focus(document.querySelector('[data-tally="total"]')!)
-    const panel = screen.getByRole('dialog', { name: zh['header.total'] })
-    expect(panel.querySelector('[data-tally="subagent"]')?.textContent).toContain('sub-a')
+  it('opens the dashboard on this session from its details and closes them', async () => {
+    const openDashboard = vi.fn()
+    render(total(sessionView(group([cny('5')])), [], openDashboard))
+    fireEvent.click(document.querySelector('[data-tally="total"]')!)
+    fireEvent.click(screen.getByRole('button', { name: zh['dock.openDashboard'] }))
+    expect(openDashboard).toHaveBeenCalledWith('s1')
+    expect(screen.queryByRole('dialog', { name: zh['header.total'] })).toBeNull()
   })
 
-  it('splits the session by model and lists subagents on hover', async () => {
+  it('splits the session by model and lists subagents in its details', async () => {
     const view = sessionView(group([cny('5')]), [
       { sessionId: 'sub-a', total: group([cny('1.25')]) },
       { sessionId: 'sub-b', total: group([], { unpricedCount: 2 }) },
     ])
     render(total(view, [{ ...group([cny('4')]), key: 'deepseek-chat' }, { ...group([cny('1')], { requestCount: 3 }), key: 'deepseek-reasoner' }]))
-    hoverDetails()
+    fireEvent.click(document.querySelector('[data-tally="total"]')!)
     await settle()
     const models = [...document.querySelectorAll('[data-tally="model-row"]')].map(row => row.textContent)
     expect(models[0]).toContain('deepseek-chat')
