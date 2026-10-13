@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { createRequire } from 'node:module'
@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startMockLlmServer, type MockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
+import { exited, killTree, removeDir, spawnTree } from '../../../../tests/support/process-tree.ts'
 
 /**
  * End-to-end acceptance against the real DeepSeek Harness web profile. `dsh-tally`,
@@ -47,19 +48,9 @@ interface RunResult {
 
 const children = new Set<ChildProcess>()
 
-/** SIGKILL the child's whole process group, so grandchildren holding stdio open die with it. */
-function killGroup(child: ChildProcess): void {
-  if (child.pid === undefined) return
-  try {
-    process.kill(-child.pid, 'SIGKILL')
-  } catch {
-    // ESRCH: the group is already gone.
-  }
-}
-
-/** Spawn a command in its own process group, collecting its output. */
+/** Spawn a command whose whole process tree can be ended, collecting its output. */
 function start(command: string, args: string[], env: NodeJS.ProcessEnv, cwd: string) {
-  const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawnTree(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
   children.add(child)
   const output = { stdout: '', stderr: '' }
   child.stdout!.setEncoding('utf8').on('data', (chunk: string) => { output.stdout += chunk })
@@ -67,16 +58,16 @@ function start(command: string, args: string[], env: NodeJS.ProcessEnv, cwd: str
   return { child, output }
 }
 
-/** Run a command to completion; its group is killed on timeout and once the direct child exited. */
+/** Run a command to completion; its tree is killed on timeout and once the direct child exited. */
 function run(command: string, args: string[], env: NodeJS.ProcessEnv, cwd: string): Promise<RunResult> {
   return new Promise((resolve) => {
     const { child, output } = start(command, args, env, cwd)
     const timer = setTimeout(() => {
-      output.stderr += `\n[e2e: killed process group after ${RUN_TIMEOUT}ms]`
-      killGroup(child)
+      output.stderr += `\n[e2e: killed process tree after ${RUN_TIMEOUT}ms]`
+      killTree(child)
     }, RUN_TIMEOUT)
     child.on('error', (error) => { output.stderr += `\n[e2e: spawn failed: ${error.message}]` })
-    child.on('exit', () => killGroup(child))
+    child.on('exit', () => killTree(child))
     child.on('close', (code) => {
       clearTimeout(timer)
       children.delete(child)
@@ -151,9 +142,25 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
       const add = await run(process.execPath, [dshBin, 'plugin', '--profile', 'web', 'add', dir], env, home)
       expect(add.code, describeRun(add)).toBe(0)
     }
-    // The overlay replaces the config of the installed balance row (bare name kept), pointing it at the stub.
-    const overlay = join(home, 'overlay-balance.yml')
-    writeFileSync(overlay, `- id: tally-balance-deepseek\n  config:\n    baseURL: http://127.0.0.1:${address.port}\n`)
+    // The overlay replaces the config of the installed balance row (bare name kept), pointing it at the stub,
+    // and pins the in-page directory picker: on a loopback bind dsh would pick the OS folder dialog on
+    // Windows and macOS (and on Linux with a display), which a browser test cannot drive.
+    const overlay = join(home, 'overlay.yml')
+    writeFileSync(overlay, [
+      '- id: tally-balance-deepseek',
+      '  config:',
+      `    baseURL: http://127.0.0.1:${address.port}`,
+      // A patch cannot rename a row, so the auto row is switched off and the two rows it would mount
+      // for `browse` (the host backend and its in-page dialog) are composed instead.
+      '- id: directory-picker',
+      '  disabled: true',
+      '- insert:',
+      '    - id: directory-picker-browse',
+      "      name: '@deepseek-ai/dsh-host-directory-picker-browse'",
+      '    - id: directory-picker-browse-ui',
+      "      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'",
+      '',
+    ].join('\n'))
 
     // A new client bundle is only picked up at startup, so dsh starts after all installs.
     web = start(process.execPath, [dshBin, '--profile', 'web', '--patch', overlay, '--no-open', '--port', '0'], env, home)
@@ -181,12 +188,15 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
 
   afterAll(async () => {
     await browser?.close()
-    for (const child of children) killGroup(child)
+    // End every process tree and wait for it before removing the home its processes hold open.
+    const running = [...children]
+    for (const child of running) killTree(child)
+    await Promise.all(running.map(exited))
     children.clear()
     await server?.close()
     stub?.closeAllConnections()
     await new Promise<void>(resolve => stub ? stub.close(() => resolve()) : resolve())
-    if (home) rmSync(home, { recursive: true, force: true })
+    if (home) await removeDir(home)
   })
 
   const shot = (name: string) => page.screenshot({ path: join(screenshotDir, `${name}.png`) })
