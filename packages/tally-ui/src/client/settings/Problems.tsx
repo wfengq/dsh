@@ -5,7 +5,7 @@ import type { T } from '../labels.ts'
 import type { Snapshot } from '../store.ts'
 import { SettingsCard } from './Card.tsx'
 import { useSnapshot } from './form.ts'
-import { groupProblems, type ProblemRow } from './problems.ts'
+import { groupProblems, type ProblemRow } from './problem-summary.ts'
 
 const SOURCE = { usage: 'settings.problem.usage', pricing: 'settings.problem.pricing', budget: 'settings.problem.budget' } as const
 

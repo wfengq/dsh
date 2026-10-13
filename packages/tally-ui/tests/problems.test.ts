@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TallyStatusView } from 'dsh-tally-api'
-import { groupProblems } from '../src/client/settings/problems.ts'
+import { groupProblems } from '../src/client/settings/problem-summary.ts'
 
 const status = (patch: Partial<TallyStatusView> = {}, errors: TallyStatusView['usage']['errors'] = []): TallyStatusView => ({
   usage: { backfill: null, errors }, catalogVersion: 'v', pricingErrors: [], budgetErrors: [], balanceRoutes: [], routes: [], ...patch,

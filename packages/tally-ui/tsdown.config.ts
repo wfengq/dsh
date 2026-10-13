@@ -5,7 +5,7 @@
  * (zod, `dsh-tally/remote`, this package's code and CSS) is inlined.
  */
 import { readFile } from 'node:fs/promises'
-import { dirname, relative, resolve } from 'node:path'
+import { basename, dirname, relative, resolve } from 'node:path'
 import { defineConfig, type UserConfig } from 'tsdown'
 
 const ID = 'dsh-tally-ui'
@@ -35,7 +35,7 @@ const PACKAGE_ROOT = process.cwd()
 
 /** Turn a stylesheet into code that injects it once when the factory runs, tagged like dsh's own plugins. */
 function styleInjection(file: string, css: string): string {
-  const tagId = `${ID}/${file.slice(file.lastIndexOf('/') + 1)}`
+  const tagId = `${ID}/${basename(file)}`
   return [
     `const css = ${JSON.stringify(css)};`,
     `const tagId = ${JSON.stringify(tagId)};`,

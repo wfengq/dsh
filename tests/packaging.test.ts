@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,7 +15,7 @@ const PACKAGES = {
 } as const
 
 function packedFiles(dir: string): string[] {
-  const out = execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: `${root}packages/${dir}`, encoding: 'utf8' })
+  const out = execSync('npm pack --dry-run --json --ignore-scripts', { cwd: `${root}packages/${dir}`, encoding: 'utf8' })
   return (JSON.parse(out) as Array<{ files: Array<{ path: string }> }>)[0]!.files.map(f => f.path)
 }
 
@@ -41,7 +41,12 @@ describe.each(Object.entries(PACKAGES))('package %s', (dir, entries) => {
   it('publishes real version ranges instead of workspace: links', () => {
     const out = mkdtempSync(join(tmpdir(), 'dsh-pack-'))
     try {
-      const packed = execFileSync('pnpm', ['pack', '--json', '--pack-destination', out], { cwd: `${root}packages/${dir}`, encoding: 'utf8' })
+      const command = process.platform === 'win32'
+        ? 'pnpm pack --json --pack-destination "%DSH_PACK_DEST%"'
+        : 'pnpm pack --json --pack-destination "$DSH_PACK_DEST"'
+      const packed = execSync(command, {
+        cwd: `${root}packages/${dir}`, encoding: 'utf8', env: { ...process.env, DSH_PACK_DEST: out },
+      })
       const tarball = (JSON.parse(packed) as { filename: string }).filename
       const json = execFileSync('tar', ['-xOf', tarball, 'package/package.json'], { encoding: 'utf8' })
       expect(json).not.toContain('workspace:')
