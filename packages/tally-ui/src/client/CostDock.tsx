@@ -5,10 +5,10 @@ import type { BalanceSnapshot, BandView, Budget, Money, SessionView, TallyStatus
 import { BalanceText } from './BalanceText.tsx'
 import { budgetRatio, budgetTone, pickDockBudget } from './budget-progress.ts'
 import { addDecimal } from './dashboard/decimal.ts'
-import { Details } from './Details.tsx'
 import type { Elements } from './elements.ts'
 import { formatCountdown, formatMoney } from './format.ts'
 import { budgetName, costLabel, FORMAT_LOCALE, type T } from './labels.ts'
+import { StatPill } from './StatPill.tsx'
 import type { Snapshot, TallyStore } from './store.ts'
 import './CostDock.css'
 
@@ -90,9 +90,9 @@ function Line({ label, value, tally }: { label: string; value: ReactNode; tally?
 }
 
 /**
- * Ambient cost line below the composer: today's and this month's cost, the budget closest to its limit
- * and the current price band. Hovering shows the details (session, every budget, balance); clicking opens
- * the usage dashboard.
+ * Ambient cost pill below the composer: today's and this month's cost, the budget closest to its limit
+ * and the current price band. It behaves like dsh's own stat pills next to it: a click toggles the
+ * details (session, every budget, balance, a way to the usage dashboard) above it.
  */
 export function CostDock(props: CostDockProps): ReactNode {
   const { useElements, useSession, useToday, useMonth, useBudgets, useBudgetSpend, useBalances, useStatus, refreshBalance, band, openDashboard, canOpenDashboard, t } = props
@@ -119,15 +119,20 @@ export function CostDock(props: CostDockProps): ReactNode {
       ? t('dock.budgetOver', { amount: formatMoney({ amount: addDecimal(picked.spent.amount, `-${picked.budget.limit.amount}`), currency: picked.budget.limit.currency }, FORMAT_LOCALE) })
       : t('dock.budget', { pct: Math.floor(picked.ratio * 100) })
 
+  const todayText = today === null ? '—' : costLabel(today, t)
+  const monthText = month === null ? '—' : costLabel(month, t)
+  const ariaLabel = [`${t('dock.today')} ${todayText}`, `${t('dock.month')} ${monthText}`, budgetLabel, bandView === null ? null : bandText(bandView, now, t)]
+    .filter((part): part is string => part !== null).join(' · ')
+
   const bar = (
-    <button type="button" className="dsh-tally-dock-bar" data-can-open={canOpen} onClick={() => { if (canOpen) openDashboard() }}>
+    <span className="dsh-tally-dock-bar">
       <span className="dsh-tally-dock-item" data-tally-item="today">
         <span className="dsh-tally-label">{t('dock.today')}</span>
-        <span className="dsh-tally-num">{today === null ? '—' : costLabel(today, t)}</span>
+        <span className="dsh-tally-num">{todayText}</span>
       </span>
       <span className="dsh-tally-dock-item" data-tally-item="month">
         <span className="dsh-tally-label">{t('dock.month')}</span>
-        <span className="dsh-tally-num">{month === null ? '—' : costLabel(month, t)}</span>
+        <span className="dsh-tally-num">{monthText}</span>
       </span>
       {picked === null
         ? null
@@ -147,10 +152,10 @@ export function CostDock(props: CostDockProps): ReactNode {
               <span className="dsh-tally-num">{bandText(bandView, now, t)}</span>
             </span>
           )}
-    </button>
+    </span>
   )
 
-  const details = (
+  const details = (close: () => void) => (
     <div className="dsh-tally-dock-card">
       {hasEntries ? <Line tally="session" label={t('dock.session')} value={costLabel(session.usage.total, t)} /> : null}
       <Line tally="today" label={t('dock.today')} value={today === null ? '—' : costLabel(today, t)} />
@@ -172,13 +177,13 @@ export function CostDock(props: CostDockProps): ReactNode {
           )
         : null}
       {bandView === null ? null : <Line label={t('dock.band')} value={bandText(bandView, now, t)} />}
-      {canOpen ? <button type="button" className="dsh-tally-link" onClick={() => { openDashboard() }}>{t('dock.openDashboard')}</button> : null}
+      {canOpen ? <button type="button" className="dsh-tally-link" onClick={() => { close(); openDashboard() }}>{t('dock.openDashboard')}</button> : null}
     </div>
   )
 
   return (
     <div className="dsh-tally-dock" data-tally="dock">
-      <Details anchor={bar} content={details} label={t('dock.details')} side="top" align="end" />
+      <StatPill label={bar} ariaLabel={ariaLabel} title={t('dock.details')}>{details}</StatPill>
     </div>
   )
 }

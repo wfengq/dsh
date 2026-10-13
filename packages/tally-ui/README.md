@@ -20,7 +20,7 @@ dsh plugin --profile web add dsh-tally@beta dsh-tally-ui@beta
 
 | 位置 | 元素 | 内容 | 截图 |
 | --- | --- | --- | --- |
-| 输入框下方 | 费用条（`composerDock`） | 一行：今日 · 本月 · 预算进度（设了预算才显示，取最接近上限的那条，80% 起警告色、超过 100% 改为“已超预算 ¥x”）· 当前价格时段和倒计时。窗口变窄时依次省略时段、本月、预算，始终不换行。悬停显示详情（本会话、今日、本月、每条预算、余额、当前时段）；点击打开右侧栏用量看板。余额在详情里点击即可刷新，失败时继续显示上一次的余额并标注“已过期” | `01-conversation.png`、`dock-light.png`、`dock-dark.png`、`04-balance-stale.png` |
+| 输入框下方 | 费用条（`composerDock`） | 一行：今日 · 本月 · 预算进度（设了预算才显示，取最接近上限的那条，80% 起警告色、超过 100% 改为“已超预算 ¥x”）· 当前价格时段和倒计时。窗口变窄时依次省略时段、本月、预算，始终不换行。外观和交互与旁边 dsh 自带的统计按钮一致：圆角按钮带图标，悬停只高亮；点击在上方打开详情（本会话、今日、本月、每条预算、余额、当前时段，以及“打开用量看板”），再次点击、点别处或按 Esc 关闭。余额在详情里点击即可刷新，失败时继续显示上一次的余额并标注“已过期” | `01-conversation.png`、`dock-light.png`、`dock-dark.png`、`04-balance-stale.png` |
 | 每轮回复末尾 | 本轮费用（`turnTail`） | 这一轮的费用。悬停显示输入、缓存命中、输出 token、缓存命中率、请求次数（含重试）和价格版本（链接到价格来源） | `01-conversation.png`、`02-turn-details.png` |
 | 会话标题栏右侧 | 会话累计（`headerUtilities`） | “本会话 ¥x”（含子代理）。悬停按模型拆分费用和请求次数，并列出子代理会话；点击打开用量看板并在排行里高亮这个会话 | `01-conversation.png` |
 | 右侧栏 | 用量看板（`sidebarTab`） | 顶部可选近 7 天 / 近 30 天 / 本月，“⋯”菜单里是“导出 CSV”。从上到下：概览（今日、本月两个大数字，所选范围合计，每条预算的进度条，未定价请求数）、每日费用（高峰 / 低谷堆叠柱状图）、排行（会话 / 模型 / 工作区切换，默认前 10 名，可“显示全部”，已删除的会话带标签）、缓存与峰谷（默认收起：缓存命中率趋势和低谷节省）。有新的用量记入后以及重连后自动刷新 | `05-dashboard.png`、`dashboard-light.png`、`dashboard-dark.png` |
@@ -88,7 +88,7 @@ dsh plugin --profile web add dsh-tally@beta dsh-tally-ui@beta
 ## 测试
 
 - `pnpm test`：组件和数据层的单元测试（jsdom），以及 bundle 共享模块检查。
-- `pnpm test:e2e`：在真实的 `dsh --profile web` 中，用 Chromium 依次验证费用条、本轮费用（含悬停详情）、会话累计、余额（含刷新失败后的“已过期”）、用量看板（含 CSV 下载）、设置页（新建预算后出现预算提醒、关闭 `turnTail` 后新一轮不再显示本轮费用）以及页面重新加载后数值不变；全过程页面没有 `console.error`，dsh 的 stderr 没有 `ExperimentalWarning` 和 `failed to import`。模型请求由 `@deepseek-ai/dsh-llm-mock-server` 应答，余额由测试内的本地服务应答。
+- `pnpm test:e2e`：在真实的 `dsh --profile web` 中，用 Chromium 依次验证费用条（含与 dsh 自带统计按钮的外观和交互一致）、本轮费用（含悬停详情）、会话累计、余额（含刷新失败后的“已过期”）、用量看板（含 CSV 下载）、设置页（新建预算后出现预算提醒、关闭 `turnTail` 后新一轮不再显示本轮费用）以及页面重新加载后数值不变；全过程页面没有 `console.error`，dsh 的 stderr 没有 `ExperimentalWarning` 和 `failed to import`。模型请求由 `@deepseek-ai/dsh-llm-mock-server` 应答，余额由测试内的本地服务应答。
 
 ## 许可证
 

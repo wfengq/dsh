@@ -192,9 +192,10 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
   const shot = (name: string) => page.screenshot({ path: join(screenshotDir, `${name}.png`) })
   const tally = (name: string) => page.locator(`[data-tally="${name}"]`)
   const dockItem = (name: string) => tally('dock').locator(`[data-tally-item="${name}"]`)
-  /** Hovers the cost bar so its details card (session, budgets, balance) shows, whole and inside the window. */
-  async function hoverDock(): Promise<void> {
-    await tally('dock').locator('.dsh-tally-dock-bar').hover()
+  /** Clicks the cost pill so its details (session, budgets, balance) show, whole and inside the window. */
+  async function openDock(): Promise<void> {
+    if (await page.locator('.dsh-tally-dock-card').isVisible()) await page.keyboard.press('Escape')
+    await tally('dock').locator('.dsh-tally-pill').click()
     const card = page.locator('.dsh-tally-dock-card')
     await card.waitFor({ state: 'visible', timeout: 10_000 })
     const panel = await card.boundingBox()
@@ -292,7 +293,7 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
   })
 
   it('shows the stub balance in the dock details, and after a refused refresh keeps it marked as stale', async () => {
-    await hoverDock()
+    await openDock()
     const balance = tally('balance')
     await expect.poll(() => balance.innerText(), { timeout: TURN_TIMEOUT }).toContain('¥110')
     expect(await balance.locator('.dsh-tally-balance-stale').count()).toBe(0)
@@ -306,6 +307,32 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     expect(await balance.innerText()).toContain('¥110')
     await shot('04-balance-stale')
     await themedShots('dock')
+    await page.keyboard.press('Escape')
+    await page.mouse.move(0, 0)
+  })
+
+  it('makes the cost pill look and act like the native stat pills beside it', async () => {
+    const pill = tally('dock').locator('.dsh-tally-pill')
+    const native = page.locator('[data-composer-stats] button').first()
+    await native.waitFor({ timeout: 10_000 })
+    const look = (locator: typeof pill) => locator.evaluate((node) => {
+      const style = getComputedStyle(node)
+      return { fontSize: style.fontSize, height: node.getBoundingClientRect().height, padding: style.padding, radius: style.borderTopLeftRadius, color: style.color, cursor: style.cursor }
+    })
+    expect(await look(pill)).toEqual(await look(native))
+    await native.hover()
+    const nativeHover = await native.evaluate(node => getComputedStyle(node).backgroundColor)
+    await pill.hover()
+    await page.waitForTimeout(800)
+    expect(await pill.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(nativeHover)
+    // Hovering opens nothing; a click opens the details, a press elsewhere closes them.
+    expect(await page.locator('.dsh-tally-dock-card').isVisible()).toBe(false)
+    await pill.click()
+    await page.locator('.dsh-tally-dock-card').waitFor({ state: 'visible', timeout: 10_000 })
+    expect(await pill.getAttribute('aria-expanded')).toBe('true')
+    await shot('dock-open')
+    await page.mouse.click(5, 5)
+    await page.locator('.dsh-tally-dock-card').waitFor({ state: 'hidden', timeout: 10_000 })
     await page.mouse.move(0, 0)
   })
 
@@ -418,6 +445,9 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
       await page.waitForTimeout(200)
       return visible()
     }
+    // The items drop out by window width; an open right sidebar would narrow the column on top of that.
+    const collapse = page.getByRole('button', { name: 'Collapse right sidebar' })
+    if (await collapse.isVisible()) await collapse.click()
     expect(await at(1280)).toEqual(['today', 'month', 'budget', 'band'])
     expect(await at(1000)).toEqual(['today', 'month', 'budget'])
     expect(await at(800)).toEqual(['today', 'budget'])
@@ -432,10 +462,9 @@ describe('dsh-tally-ui in the real dsh web profile', () => {
     const pin = await page.addStyleTag({ content: '[data-tally="dock"] { position: fixed; right: 8px; bottom: 8px; }' })
     for (const width of [1600, 800]) {
       await page.setViewportSize({ width, height: 900 })
-      await page.mouse.move(0, 0)
-      await page.locator('.dsh-tally-dock-card').waitFor({ state: 'hidden', timeout: 10_000 })
-      await hoverDock()
+      await openDock()
       await shot(`dock-details-right-edge-${width}`)
+      await page.keyboard.press('Escape')
     }
     await page.mouse.move(0, 0)
     await pin.evaluate(node => { node.remove() })

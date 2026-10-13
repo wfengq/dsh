@@ -81,7 +81,8 @@ afterEach(() => {
 })
 
 describe('CostDock', () => {
-  const hover = hoverDetails
+  const bar = () => screen.getByRole('button', { name: new RegExp(zh['dock.today']) })
+  const hover = () => { fireEvent.click(bar()) }
   const order = () => [...document.querySelectorAll('[data-tally="dock"] [data-tally-item]')].map(n => n.getAttribute('data-tally-item'))
   const daily: Budget = { id: 'd', period: 'day', scope: {}, limit: cny('10') }
   const monthly: Budget = { id: 'm', period: 'month', scope: {}, limit: cny('100') }
@@ -120,7 +121,7 @@ describe('CostDock', () => {
     expect(document.querySelector('[data-tally-item="band"] [data-state-dot]')?.getAttribute('data-state-dot')).toBe('warning')
   })
 
-  it('lists session, today, month, budgets and the balance in the hover card', async () => {
+  it('lists session, today, month, budgets and the balance in the details', async () => {
     render(<CostDock {...dockProps({ budgets: [daily], spend: { d: cny('3.2') }, balances: { deepseek: balance({ wallets: [{ kind: 'total', money: cny('9') }] }) } })} />)
     await settle()
     hover()
@@ -133,49 +134,34 @@ describe('CostDock', () => {
     expect(card.textContent).toContain(zh['dock.openDashboard'])
   })
 
-  it('opens the hover details above the bar, lined up with its right edge, so they stay inside the window', async () => {
+  it('works like the native stat pills: a click toggles the details above it, hovering opens nothing', async () => {
     render(<CostDock {...dockProps()} />)
     await settle()
+    expect(bar().querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+    expect(bar().getAttribute('aria-haspopup')).toBe('dialog')
+    expect(bar().getAttribute('aria-expanded')).toBe('false')
+    fireEvent.mouseEnter(bar())
+    act(() => { vi.advanceTimersByTime(2000) })
+    expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
     anchoredPlacements.length = 0
-    hover()
+    fireEvent.click(bar())
     expect(screen.getByRole('dialog', { name: zh['dock.details'] })).toBeTruthy()
-    expect(anchoredPlacements.at(-1)).toEqual({ side: 'top', align: 'end' })
+    expect(bar().getAttribute('aria-expanded')).toBe('true')
+    expect(anchoredPlacements.at(-1)).toEqual({ side: 'top', align: undefined })
+    fireEvent.click(bar())
+    expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
   })
 
-  it('waits for the pointer to rest before opening and closes once it leaves', async () => {
-    render(<CostDock {...dockProps()} />)
+  it('closes the details on Escape and on a press outside, and keeps them open for a press inside', async () => {
+    render(<CostDock {...dockProps({ balances: { deepseek: balance({ wallets: [{ kind: 'total', money: cny('9') }] }) } })} />)
     await settle()
-    const root = document.querySelector('.dsh-tally-details')!
-    fireEvent.mouseEnter(root)
-    act(() => { vi.advanceTimersByTime(100) })
+    fireEvent.click(bar())
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
-    act(() => { vi.advanceTimersByTime(400) })
+    fireEvent.click(bar())
+    fireEvent.pointerDown(screen.getByRole('dialog', { name: zh['dock.details'] }))
     expect(screen.getByRole('dialog', { name: zh['dock.details'] })).toBeTruthy()
-    fireEvent.mouseLeave(root)
-    act(() => { vi.advanceTimersByTime(500) })
-    expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
-  })
-
-  it('opens the same details for keyboard focus, with the balance refresh reachable, and closes on Escape', async () => {
-    const props = dockProps({ balances: { deepseek: balance({ wallets: [{ kind: 'total', money: cny('9') }] }) } })
-    render(<CostDock {...props} />)
-    await settle()
-    const bar = screen.getByRole('button', { name: new RegExp(zh['dock.today']) })
-    fireEvent.focus(bar)
-    const panel = screen.getByRole('dialog', { name: zh['dock.details'] })
-    expect(panel.querySelector('[data-tally="balance"]')?.textContent).toContain('¥9')
-    fireEvent.click(panel.querySelector('[data-tally="balance"]')!)
-    expect(props.refreshBalance).toHaveBeenCalledWith('deepseek')
-    fireEvent.keyDown(panel, { key: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
-  })
-
-  it('does not open the keyboard panel for the focus that follows a click', async () => {
-    render(<CostDock {...dockProps()} />)
-    await settle()
-    const bar = screen.getByRole('button', { name: new RegExp(zh['dock.today']) })
-    fireEvent.pointerDown(bar)
-    fireEvent.focus(bar)
+    fireEvent.pointerDown(document.body)
     expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
   })
 
@@ -183,18 +169,20 @@ describe('CostDock', () => {
     const props = dockProps({ canOpen: false })
     render(<CostDock {...props} />)
     await settle()
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['dock.today']) }))
-    expect(props.openDashboard).not.toHaveBeenCalled()
     hover()
     expect(screen.queryByText(zh['dock.openDashboard'])).toBeNull()
+    expect(props.openDashboard).not.toHaveBeenCalled()
   })
 
-  it('opens the dashboard when the bar is clicked', async () => {
+  it('opens the dashboard from the details, not from the bar, and closes the details', async () => {
     const props = dockProps()
     render(<CostDock {...props} />)
     await settle()
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['dock.today']) }))
+    fireEvent.click(bar())
+    expect(props.openDashboard).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: zh['dock.openDashboard'] }))
     expect(props.openDashboard).toHaveBeenCalledWith()
+    expect(screen.queryByRole('dialog', { name: zh['dock.details'] })).toBeNull()
   })
 
   it('shows "unpriced" for an amount that has no price, never ¥0', async () => {
@@ -212,7 +200,7 @@ describe('CostDock', () => {
     expect(document.body.textContent).not.toContain('¥0')
   })
 
-  it('refreshes the balance from the hover card', async () => {
+  it('refreshes the balance from the details', async () => {
     const props = dockProps({ balances: { deepseek: balance({ wallets: [{ kind: 'total', money: cny('12.5') }] }) } })
     render(<CostDock {...props} />)
     await settle()

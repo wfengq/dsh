@@ -3,7 +3,7 @@
  * bundle imports packages that are only its own dev dependencies (shiki, simple-icons, ...), so
  * it cannot load under vitest; these keep the same props and expose the behavior the tests drive.
  */
-import { forwardRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import { forwardRef, useEffect, useState, type ComponentPropsWithoutRef, type ReactNode, type RefObject } from 'react'
 
 export const Button = forwardRef<HTMLButtonElement, ComponentPropsWithoutRef<'button'> & { variant?: string; size?: string; icon?: ReactNode }>(
   function Button({ variant: _variant, size: _size, icon, children, ...rest }, ref) {
@@ -25,7 +25,19 @@ export function useAnchoredPosition(options: { side?: string; align?: string }):
   return {}
 }
 
-export function useDismissOnOutsidePointer(): void {}
+/** Like the real hook: a pointerdown outside the root (and the portaled surface) closes it. */
+export function useDismissOnOutsidePointer(root: RefObject<HTMLElement | null>, open: boolean, setOpen: (open: boolean) => void, portal?: RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event: Event) => {
+      const target = event.target as Node
+      if (root.current?.contains(target) || portal?.current?.contains(target)) return
+      setOpen(false)
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => { document.removeEventListener('pointerdown', onDown) }
+  }, [root, open, setOpen, portal])
+}
 
 /** Opens on mouse enter, like the real card after its dwell. */
 export function HoverCard({ anchor, content }: { anchor: ReactNode; content: ReactNode }) {
